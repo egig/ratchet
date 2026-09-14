@@ -1,5 +1,5 @@
 import { App, type Ctx } from './http-app.js';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import type { FileStorage } from '@flystorage/file-storage';
 import type { FileFieldDefinition } from '../core/field.js';
 import type { CustomOperationDefinition, ModelDefinition } from '../core/model.js';
@@ -61,7 +61,6 @@ async function resolveFieldAccess(
   return { user, granted };
 }
 
-type AnyDb = PgDatabase<any, any, any>;
 
 function resolveModel(registry: Record<string, ModelDefinition>, name: string): ModelDefinition {
   const model = registry[name];

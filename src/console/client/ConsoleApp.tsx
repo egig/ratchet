@@ -5,6 +5,7 @@ import { RequireAuth } from './RequireAuth.js';
 import { Layout } from './Layout.js';
 import { LoginPage } from './LoginPage.js';
 import { SetupPage } from './SetupPage.js';
+import { NotFoundPage } from './NotFoundPage.js';
 import { IndexRedirect } from './IndexRedirect.js';
 import { ModelListPage } from './ModelListPage.js';
 import { SettingsPage } from './SettingsPage.js';
@@ -59,6 +60,7 @@ export function ConsoleApp({ customForms, fieldInputs }: ConsoleAppProps) {
                     <Route path=":model/*" element={<ModelListPage />} />
                   </Route>
                 </Route>
+                <Route path="*" element={<NotFoundPage />} />
               </Routes>
             </AuthProvider>
           </BrowserRouter>

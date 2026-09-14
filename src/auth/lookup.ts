@@ -1,8 +1,7 @@
 import { sql } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import { rowToCamelCase } from '../core/naming.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 /**
  * Raw `sql` queries against the built-in auth tables, deliberately independent of
@@ -12,11 +11,6 @@ type AnyDb = PgDatabase<any, any, any>;
  * framework's own fixed built-in schema, not derived from user models.
  */
 
-async function execRows(db: AnyDb, query: ReturnType<typeof sql>): Promise<Record<string, unknown>[]> {
-  const result = await db.execute(query);
-  return result as unknown as Record<string, unknown>[];
-}
-
 export interface SessionRow {
   id: string;
   userId: string;
@@ -25,16 +19,14 @@ export interface SessionRow {
 }
 
 export async function findSessionByToken(db: AnyDb, token: string): Promise<SessionRow | null> {
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`SELECT id, user_id, token, expires_at FROM sessions WHERE token = ${token} AND deleted_at IS NULL LIMIT 1`,
   );
   return rows[0] ? (rowToCamelCase(rows[0]) as unknown as SessionRow) : null;
 }
 
 export async function insertSession(db: AnyDb, id: string, userId: string, token: string, expiresAt: Date, now: Date): Promise<SessionRow> {
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`INSERT INTO sessions (id, user_id, token, expires_at, created_at, updated_at, created_by_id)
         VALUES (${id}, ${userId}, ${token}, ${expiresAt.toISOString()}, ${now.toISOString()}, ${now.toISOString()}, ${userId})
         RETURNING id, user_id, token, expires_at`,
@@ -45,7 +37,7 @@ export async function insertSession(db: AnyDb, id: string, userId: string, token
 }
 
 export async function deleteSessionByToken(db: AnyDb, token: string): Promise<void> {
-  await db.execute(sql`DELETE FROM sessions WHERE token = ${token}`);
+  await db.run(sql`DELETE FROM sessions WHERE token = ${token}`);
 }
 
 export interface UserRow {
@@ -57,16 +49,14 @@ export interface UserRow {
 }
 
 export async function findUserById(db: AnyDb, id: string): Promise<UserRow | null> {
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`SELECT id, email, password_hash, role_id, active FROM users WHERE id = ${id} AND deleted_at IS NULL LIMIT 1`,
   );
   return rows[0] ? (rowToCamelCase(rows[0]) as unknown as UserRow) : null;
 }
 
 export async function findUserByEmail(db: AnyDb, email: string): Promise<UserRow | null> {
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`SELECT id, email, password_hash, role_id, active FROM users WHERE email = ${email} AND deleted_at IS NULL LIMIT 1`,
   );
   return rows[0] ? (rowToCamelCase(rows[0]) as unknown as UserRow) : null;
@@ -86,11 +76,20 @@ export interface PermissionRow {
  * entirely (rather than carrying an explicit `null`) is normalized to `field: null` here so every
  * caller (`resolveGrantedFields`, tests) can rely on `field: string | null`, never `undefined`. */
 export async function listPermissionsForRole(db: AnyDb, roleId: string): Promise<PermissionRow[]> {
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`SELECT permissions FROM roles WHERE id = ${roleId} AND deleted_at IS NULL LIMIT 1`,
   );
-  const raw = (rows[0]?.permissions as Array<{ resource: string; action: string; field?: string | null }> | null) ?? [];
+  const value = rows[0]?.permissions;
+  // A raw `db.execute(sql...)` bypasses Drizzle's schema-aware `mode: 'json'` column handling
+  // (that only applies to the query builder), so `permissions` — a `text` column on SQLite —
+  // comes back as a JSON string there, unlike Postgres' jsonb, which the driver already parses
+  // into an array/object. Parse it by hand only when it actually is a string, so this stays
+  // correct on both dialects without branching on `db.dialect` explicitly.
+  const raw = (typeof value === 'string' ? JSON.parse(value) : (value ?? [])) as Array<{
+    resource: string;
+    action: string;
+    field?: string | null;
+  }>;
   return raw.map((p) => ({ resource: p.resource, action: p.action, field: p.field ?? null }));
 }
 
@@ -100,7 +99,7 @@ export interface RoleRow {
 }
 
 export async function findRoleByName(db: AnyDb, name: string): Promise<RoleRow | null> {
-  const rows = await execRows(db, sql`SELECT id, name FROM roles WHERE name = ${name} AND deleted_at IS NULL LIMIT 1`);
+  const rows = await db.execute(sql`SELECT id, name FROM roles WHERE name = ${name} AND deleted_at IS NULL LIMIT 1`);
   return rows[0] ? (rowToCamelCase(rows[0]) as unknown as RoleRow) : null;
 }
 
@@ -113,13 +112,23 @@ export async function findRoleByName(db: AnyDb, name: string): Promise<RoleRow |
  * that element's own `field` value or how many other grants sit alongside it.
  */
 export async function hasRootAdmin(db: AnyDb): Promise<boolean> {
-  const rows = await execRows(
-    db,
-    sql`SELECT 1
+  // `@>` (jsonb containment) has no SQLite equivalent — permissions is a `text({mode:'json'})`
+  // column there, so the same "any grant is `*:*`" check goes through `json_each` instead.
+  const query =
+    db.dialect === 'sqlite'
+      ? sql`SELECT 1
+        FROM users u
+        JOIN roles r ON r.id = u.role_id AND r.deleted_at IS NULL
+        WHERE u.deleted_at IS NULL AND EXISTS (
+          SELECT 1 FROM json_each(r.permissions)
+          WHERE json_extract(value, '$.resource') = '*' AND json_extract(value, '$.action') = '*'
+        )
+        LIMIT 1`
+      : sql`SELECT 1
         FROM users u
         JOIN roles r ON r.id = u.role_id AND r.deleted_at IS NULL
         WHERE u.deleted_at IS NULL AND r.permissions @> '[{"resource":"*","action":"*"}]'::jsonb
-        LIMIT 1`,
-  );
+        LIMIT 1`;
+  const rows = await db.execute(query);
   return rows.length > 0;
 }

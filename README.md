@@ -7,9 +7,9 @@
 
 <h1 align="center">Ratchet</h1>
 
-<p align="center">Model driven application framework: TypeScript models -> Postgres schema, codegen, and composable pipelines.</p>
+<p align="center">Model driven application framework: TypeScript models -> SQLite/Postgres schema, codegen, and composable pipelines.</p>
 
-Ratchet turns a directory of TypeScript model files into a Postgres schema, a REST API, a console, and auth — with composable pipelines wherever you need custom logic.
+Ratchet turns a directory of TypeScript model files into a SQLite or Postgres schema, a REST API, a console, and auth — with composable pipelines wherever you need custom logic.
 
 ## Install
 
@@ -20,7 +20,8 @@ bun add @egig/ratchet
 ## Prerequisites
 
 - [Bun](https://bun.sh) 1.3+
-- A Postgres database, reachable via a `DATABASE_URL` connection string
+
+That's it — a new project defaults to a local SQLite file, created automatically. No database to install. Postgres and hosted [Turso](https://turso.tech) are supported too — see `docs/content/docs/database.mdx`.
 
 ## Scaffold a project
 

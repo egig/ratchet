@@ -116,6 +116,14 @@ const echoTool = tool(async () => 'ok', {
 });
 
 describe('runAgentTurn', () => {
+  it('throws a clean error when the agent has no provider configured (opts.model unset)', async () => {
+    const opts = baseOpts(new FakeChatModel([]), {
+      agent: { name: 'test-agent', providerId: null, roleId: null, model: 'test-model', systemPrompt: 'sys', config: null },
+      model: undefined,
+    });
+    await expect(collect(runAgentTurn(opts))).rejects.toThrow('has no model provider configured');
+  });
+
   it('streams assistant text and ends on end_turn with the reported usage', async () => {
     const model = new FakeChatModel([{ text: 'Hi there', stopReason: 'end_turn', usage: { input: 5, output: 3 } }]);
     const events = await collect(runAgentTurn(baseOpts(model)));

@@ -1,10 +1,9 @@
 import { sql } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from './db.js';
 import type { DomainDefinition } from './domain.js';
 import { buildDomainSettingsSchema } from './validation.js';
 import { PipelineError } from './pipeline.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 const TABLE = 'ratchet_domain_settings';
 
@@ -48,7 +47,7 @@ export async function updateDomainSettings(
   const merged = { ...current, ...(result.data as Record<string, unknown>) };
   const now = new Date().toISOString();
 
-  await db.execute(sql`
+  await db.run(sql`
     INSERT INTO ${sql.identifier(TABLE)} (${sql.identifier('domain')}, ${sql.identifier('values')}, ${sql.identifier('updated_at')})
     VALUES (${def.name}, ${JSON.stringify(merged)}, ${now})
     ON CONFLICT (${sql.identifier('domain')})

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import type { AnyDb } from '../src/core/db.js';
+import { connectTestDb } from './helpers/db.js';
+import type postgres from 'postgres';
 import { sql } from 'drizzle-orm';
 import { defineModel, field } from '../src/core/index.js';
 import {
@@ -144,7 +144,7 @@ describe('codegen/schema-gen.ts: inverse FK column emission', () => {
       { filePath: '/fake/article.model.ts', exportName: 'Article', model: Article },
       { filePath: '/fake/comment.model.ts', exportName: 'Comment', model: Comment },
     ];
-    const src = generateSchemaSource(scanned);
+    const src = generateSchemaSource(scanned, 'postgres');
 
     // the comments table carries the inverse FK column + restrict reference
     expect(src).toContain('articlesId: uuid');
@@ -161,12 +161,11 @@ const describeIfDb = connectionString ? describe : describe.skip;
 
 describeIfDb('referenceToMany end-to-end (against a live Postgres)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
   let app: ReturnType<typeof createApiRouter>;
 
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS articles (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,

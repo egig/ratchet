@@ -1,7 +1,7 @@
 import { App } from '../router/http-app.js';
 import { createAssistantStreamResponse } from 'assistant-stream';
 import type { ReadonlyJSONObject } from 'assistant-stream/utils';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import type { ModelDefinition } from '../core/model.js';
 import { PipelineError } from '../core/pipeline.js';
 import { fetchRow, insertRow, updateRow, hardRemoveRow } from '../core/persistence.js';
@@ -23,7 +23,6 @@ import {
 import { Workspace, WorkspaceView } from '../workspace/models/index.js';
 import { assertOwnsWorkspace } from '../workspace/pipeline.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 /** Shown (as the whole message body) when a turn ends with nothing in `parts` — an abort or
  * timeout before the first token, a content-filter refusal, or the tool-iteration cap with no
@@ -74,6 +73,8 @@ export function summarizeTurnError(err: unknown): string {
     return 'this conversation is too long for the model context window — start a new chat';
   if (/unknown model|invalid model|model .*(not found|does not exist)|no such model/.test(flat))
     return 'the configured model was rejected by the provider — check the agent model id';
+  if (/no model provider configured|provider that no longer exists/.test(flat))
+    return 'this agent has no model provider configured — connect one before starting a chat';
 
   return 'unexpected error — see the server logs for details';
 }

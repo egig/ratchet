@@ -1,4 +1,4 @@
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import { createAgent } from 'langchain';
 import { GraphRecursionError } from '@langchain/langgraph';
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
@@ -11,7 +11,6 @@ import { resolveAgentTools, executeAgentTool, type AgentTool } from './tool.js';
 import { Provider } from './models/index.js';
 import type { ChatEvent, ChatMessage, ChatStopReason, ChatUsage } from './events.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 // One tool-use round is two LangGraph super-steps (model node + tools node). Cap at 8 rounds like
 // the old hand-rolled loop: 2 * 8 + 1 for the trailing model call that produces the final answer.
@@ -157,6 +156,9 @@ export async function* runAgentTurn(opts: {
   if (opts.model) {
     model = opts.model;
   } else {
+    if (!agent.providerId) {
+      throw new Error(`agent '${agent.name as string}' has no model provider configured`);
+    }
     const providerRow = await fetchRow(opts.db, Provider, agent.providerId as string);
     if (!providerRow) {
       throw new Error(`agent '${agent.name as string}' references a provider that no longer exists`);

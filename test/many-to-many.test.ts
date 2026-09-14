@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import type postgres from 'postgres';
 import { sql } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../src/core/db.js';
+import { connectTestDb } from './helpers/db.js';
 import { defineModel, field } from '../src/core/index.js';
 import {
   allManyToManyRelationsInvolving,
@@ -168,7 +168,7 @@ describe('codegen/schema-gen.ts: junction table emission', () => {
       { filePath: '/fake/post.model.ts', exportName: 'Post', model: Post },
       { filePath: '/fake/tag.model.ts', exportName: 'Tag', model: Tag },
     ];
-    const src = generateSchemaSource(scanned);
+    const src = generateSchemaSource(scanned, 'postgres');
 
     expect(src).toContain("pgTable('posts_tags'");
     expect(src).toContain('postsId: uuid');
@@ -187,12 +187,11 @@ const describeIfDb = connectionString ? describe : describe.skip;
 
 describeIfDb('manyToMany end-to-end (against a live Postgres)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
   let app: ReturnType<typeof createApiRouter>;
 
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS tags (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,

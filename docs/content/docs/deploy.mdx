@@ -12,7 +12,7 @@ import { createRatchetApp } from '@egig/ratchet/server';
 import { bundle } from './.ratchet/app.js'; // written by `ratchet generate`
 
 const app = await createRatchetApp({
-  db,                                     // required — a drizzle-postgres client you construct
+  db,                                     // required — an AnyDb handle, e.g. from createDb() (@egig/ratchet/core)
   bundle,                                 // required — { models, domains, web? }
   storage,                                // optional — omit and `field.file` writes 500
   consoleAssets,                          // optional — omit and the console isn't mounted
@@ -26,14 +26,14 @@ const app = await createRatchetApp({
 ## Local development
 
 ```sh
-PORT=3000 DATABASE_URL=postgres://... ratchet serve
+PORT=3000 ratchet serve   # DATABASE_URL unset -> the local SQLite file; set it to point elsewhere
 ```
 
-Nothing else to configure — see [CLI Reference](/docs/cli).
+Nothing else to configure — see [CLI Reference](/docs/cli) and [Database](/docs/database).
 
 ## VPS / container
 
-`ratchet build` bundles a Node server entry to `dist/server.js` (postgres.js + `serveNode`, console assets read straight off disk — a trivial file that just calls `createRatchetApp`). Ship that file, `.ratchet/`, and a `DATABASE_URL`:
+`ratchet build` bundles a Node server entry to `dist/server.js` (`createDb` from `@egig/ratchet/core` dispatching to whichever driver `ratchet.config.ts` resolved to + `serveNode`, console assets read straight off disk — a trivial file that just calls `createRatchetApp`). Ship that file, `.ratchet/`, and a `DATABASE_URL` (or leave it unset to keep using the local SQLite file — make sure the file persists across deploys/restarts if so, e.g. on a mounted volume):
 
 ```sh
 ratchet build

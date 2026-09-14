@@ -3,12 +3,13 @@ title: Getting Started
 description: Scaffold a project, define your first model, and boot the server.
 ---
 
-Ratchet turns a directory of TypeScript model files into a Postgres schema, a REST API, a console, and auth — with composable pipelines wherever you need custom logic.
+Ratchet turns a directory of TypeScript model files into a SQLite or Postgres schema, a REST API, a console, and auth — with composable pipelines wherever you need custom logic.
 
 ## Prerequisites
 
 - [Bun](https://bun.sh) 1.3+
-- A Postgres database, reachable via a `DATABASE_URL` connection string
+
+That's it — a new project defaults to a local SQLite file (`./local.db`), created automatically on first use. No database to install or run. See [Database](/docs/database) for using Postgres or hosted [Turso](https://turso.tech) instead.
 
 ## Scaffold a project
 
@@ -24,19 +25,20 @@ This writes `package.json`, `tsconfig.json`, `ratchet.config.ts`, `models/exampl
 import { defineConfig } from '@egig/ratchet/core';
 
 export default defineConfig({
-  db: { connectionString: process.env.DATABASE_URL! },
+  db: { driver: 'sqlite', url: process.env.DATABASE_URL ?? 'file:./local.db' },
   modelsDir: 'models',
   generatedDir: '.ratchet',
   migrationsDir: 'drizzle/migrations',
 });
 ```
 
-## Install and configure
+## Install
 
 ```sh
 bun install
-export DATABASE_URL=postgres://user:pass@localhost:5432/mydb
 ```
+
+Using Postgres or Turso instead of the local SQLite file? See [Database](/docs/database).
 
 ## Define a model
 
@@ -69,6 +71,8 @@ bun run serve        # boot the API + console
 - `/console` — the generated console SPA (customize with `consolePath`; registered last since it can be mounted at `/`, see [Console](/docs/console))
 
 For local iteration, `bun run dev` watches `models/**/*.model.ts` and on every change regenerates, runs `drizzle-kit push`, and restarts the dev server — faster than the migration-file workflow, intended for development only.
+
+Visit the console (`/console` by default) and you'll land on a one-time setup screen to create the root admin. This only works in development — in production, `/setup` 404s unconditionally so it never reveals whether a root admin exists yet. Bootstrap the first admin there with [`ratchet create-admin`](/docs/cli#ratchet-create-admin) instead, which writes directly to the database. Set `env: 'production'` in `ratchet.config.ts` (or `NODE_ENV=production`) to opt into that behavior.
 
 ## Next steps
 

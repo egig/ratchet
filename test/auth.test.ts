@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import type postgres from 'postgres';
 import { sql } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../src/core/db.js';
+import { connectTestDb } from './helpers/db.js';
 import { defineModel, field } from '../src/core/index.js';
 import { generateId } from '../src/core/id.js';
 import { insertRow } from '../src/core/persistence.js';
@@ -52,8 +52,9 @@ const describeIfDb = connectionString ? describe : describe.skip;
 
 describeIfDb('auth system (against a live Postgres)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
   let authApp: ReturnType<typeof createAuthRouter>;
+  let prodAuthApp: ReturnType<typeof createAuthRouter>;
   let apiApp: ReturnType<typeof createApiRouter>;
   let consoleApp: ReturnType<typeof createConsoleRouter>;
 
@@ -94,8 +95,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
   });
 
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS roles (
@@ -112,9 +112,10 @@ describeIfDb('auth system (against a live Postgres)', () => {
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
         user_id uuid NOT NULL, token varchar NOT NULL, expires_at timestamptz NOT NULL
       )`);
-    // setup now also provisions a `Provider` + the built-in `Ratchet` `Agent` (src/auth/router.ts
-    // POST /setup) alongside the root role/user — these two tables need to exist for that insert
-    // to succeed, even though this suite is otherwise entirely about auth.
+    // setup also provisions the built-in `Ratchet` `Agent` (providerId: null — src/auth/provisioning.ts)
+    // alongside the root role/user, so `agents` needs to exist for that insert to succeed, even
+    // though this suite is otherwise entirely about auth. `providers` stays around only because
+    // `agents.provider_id` references it conceptually; setup itself never writes to it anymore.
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS providers (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
@@ -123,7 +124,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS agents (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        name varchar NOT NULL, description text, system_prompt text NOT NULL, provider_id uuid NOT NULL, role_id uuid,
+        name varchar NOT NULL, description text, system_prompt text NOT NULL, provider_id uuid, role_id uuid,
         model varchar NOT NULL DEFAULT 'claude-opus-5', config jsonb, active boolean NOT NULL DEFAULT true
       )`);
     await db.execute(sql`
@@ -152,6 +153,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
       )`);
 
     authApp = createAuthRouter(db);
+    prodAuthApp = createAuthRouter(db, { env: 'production' });
     apiApp = createApiRouter({ roles: Role, users: User, notes: Note, lockable_docs: LockableDoc }, db);
     consoleApp = createConsoleRouter(
       createNodeFsAssetSource('.ratchet-test'),
@@ -177,11 +179,8 @@ describeIfDb('auth system (against a live Postgres)', () => {
     await client.end();
   });
 
-  /** Every `POST /setup` call in this suite needs a `providerApiKey` now that setup also
-   * provisions the built-in `Ratchet` agent's `Provider` — a small helper keeps every call site
-   * below from repeating the same filler credential. */
   function setupBody(email: string, password = 'hunter2'): string {
-    return JSON.stringify({ email, password, providerApiKey: 'sk-test-key' });
+    return JSON.stringify({ email, password });
   }
 
   async function registerUser(email: string, password: string) {
@@ -270,58 +269,47 @@ describeIfDb('auth system (against a live Postgres)', () => {
       expect(roles[0]!.permissions).toEqual([{ resource: '*', action: '*', field: '*' }]);
     });
 
-    it('requires a providerApiKey — 400s without one', async () => {
-      const res = await authApp.request('/setup', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'root6@example.com', password: 'hunter2' }),
-      });
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { error: { fields?: Record<string, string> } }).error.fields?.providerApiKey).toBe('required');
-    });
-
-    it('rejects an unknown providerKind', async () => {
-      const res = await authApp.request('/setup', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'root7@example.com', password: 'hunter2', providerApiKey: 'sk-test', providerKind: 'bogus' }),
-      });
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { error: { fields?: Record<string, string> } }).error.fields?.providerKind).toBeTruthy();
-    });
-
-    it('provisions a Provider + the built-in Ratchet Agent, wired to the Root role', async () => {
+    it('provisions the built-in Ratchet Agent with no Provider, wired to the Root role', async () => {
       await authApp.request('/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          email: 'root8@example.com',
-          password: 'hunter2',
-          providerApiKey: 'sk-test-key',
-          providerKind: 'openai',
-          providerUrl: 'https://api.example.com/v1',
-        }),
+        body: setupBody('root8@example.com'),
       });
 
-      const providers = (await db.execute(sql`SELECT id, name, kind, url, api_key FROM providers`)) as unknown as {
-        id: string;
-        name: string;
-        kind: string;
-        url: string | null;
-        api_key: string;
-      }[];
-      expect(providers.length).toBe(1);
-      const provider = providers[0]!;
-      expect(provider).toMatchObject({ name: 'Ratchet Provider', kind: 'openai', url: 'https://api.example.com/v1', api_key: 'sk-test-key' });
+      const providers = (await db.execute(sql`SELECT id FROM providers`)) as unknown as { id: string }[];
+      expect(providers.length).toBe(0);
 
       const roles = (await db.execute(sql`SELECT id FROM roles WHERE name = 'Root'`)) as unknown as { id: string }[];
       const agents = (await db.execute(sql`SELECT name, provider_id, role_id FROM agents`)) as unknown as {
         name: string;
-        provider_id: string;
+        provider_id: string | null;
         role_id: string;
       }[];
       expect(agents.length).toBe(1);
-      expect(agents[0]).toEqual({ name: 'Ratchet', provider_id: provider.id, role_id: roles[0]!.id });
+      expect(agents[0]).toEqual({ name: 'Ratchet', provider_id: null, role_id: roles[0]!.id });
+    });
+  });
+
+  describe('/setup is disguised as missing in production (src/auth/router.ts)', () => {
+    it('GET and POST /setup both 404, regardless of whether a root admin exists yet', async () => {
+      const beforeGet = await prodAuthApp.request('/setup');
+      expect(beforeGet.status).toBe(404);
+      const beforePost = await prodAuthApp.request('/setup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: setupBody('prod-root@example.com'),
+      });
+      expect(beforePost.status).toBe(404);
+
+      // ... and still 404s once a root admin exists (created out-of-band, the way `ratchet
+      // create-admin` would in a real deploy).
+      await authApp.request('/setup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: setupBody('prod-root2@example.com'),
+      });
+      const afterGet = await prodAuthApp.request('/setup');
+      expect(afterGet.status).toBe(404);
     });
   });
 

@@ -14,6 +14,7 @@ import { generateFieldInputsSource } from './field-inputs-gen.js';
 import { scanRoutes } from '../web/scan-routes.js';
 import { generateClientRoutesSource, generateServerRoutesSource } from '../web/routes-gen.js';
 import { generateAppBundleSource } from './app-bundle-gen.js';
+import type { Dialect } from '../core/db.js';
 
 export interface GenerateOptions {
   modelsDir: string;
@@ -21,6 +22,8 @@ export interface GenerateOptions {
   /** the developer's React Router site (see `src/web/`). When omitted or when
    * `<routesDir>/root.tsx` is absent, no route manifests are written. */
   routesDir?: string;
+  /** default: 'postgres' */
+  dialect?: Dialect;
 }
 
 export interface GenerateResult {
@@ -58,7 +61,7 @@ export async function generate(opts: GenerateOptions): Promise<GenerateResult> {
 
   await mkdir(opts.generatedDir, { recursive: true });
 
-  const schemaSrc = generateSchemaSource(scanned);
+  const schemaSrc = generateSchemaSource(scanned, opts.dialect ?? 'postgres');
   const validatorsSrc = generateValidatorsSource(scanned, opts.generatedDir);
   const registrySrc = generateRegistrySource(scanned, opts.generatedDir);
   const domainsSrc = generateDomainsSource(scannedDomains, opts.generatedDir);

@@ -1,0 +1,60 @@
+---
+title: Database
+description: SQLite (the default) vs Postgres, switching between them, and the Turso upgrade path.
+---
+
+`ratchet.config.ts`'s `db` field picks the driver. It's a per-project choice — the two drivers are
+otherwise equal citizens, and switching later is a config edit, not a rewrite.
+
+## SQLite (default)
+
+`ratchet init` scaffolds this — a local file, created automatically on first use, no external
+database to install or run:
+
+```ts
+db: { driver: 'sqlite', url: process.env.DATABASE_URL ?? 'file:./local.db' },
+```
+
+`url` accepts a local file path (`file:./local.db`, `file:/absolute/path.db`) or a remote
+[Turso](https://turso.tech) URL (`libsql://<db>.turso.io`, with `authToken`) — same driver, same
+`drizzle-kit` dialect, just a different `url`. Moving to Turso later is a config change, not a
+driver swap.
+
+## Postgres
+
+```ts
+db: { driver: 'postgres', connectionString: process.env.DATABASE_URL! },
+```
+
+Switching an existing SQLite project to Postgres:
+
+1. Change `ratchet.config.ts`'s `db` to the shape above.
+2. Swap `@libsql/client` for `postgres` in `package.json`'s dependencies (`drizzle-orm`/`drizzle-kit` already support both — no change needed there).
+3. `bun install`, then `bun run generate` — this regenerates `.ratchet/schema.ts` against `drizzle-orm/pg-core` and writes a fresh set of SQL migration files under a Postgres-specific column mapping (`uuid`/`varchar`/`jsonb`/`timestamptz` instead of SQLite's `text`/`integer`-backed columns).
+4. `bun run migrate` against the new Postgres database.
+
+There's no automatic data migration between the two — treat this as pointing a fresh project at a
+different database, not an in-place upgrade of existing data.
+
+A config with no `driver` key at all (`db: { connectionString: '...' }`) is still accepted and
+treated as `driver: 'postgres'` — the pre-multi-driver config shape from before this framework
+supported more than one dialect.
+
+## Column-type mapping and Postgres-only SQL
+
+See [ADR 0004](https://github.com/egig/ratchet/blob/main/docs/adr/0004-sqlite-libsql-second-db-driver.md)
+for the full per-field-kind column mapping (e.g. `boolean` → `integer({mode:'boolean'})`,
+`datetime` → an ISO-8601 UTC string either way) and the handful of Postgres-only SQL constructs
+(`ILIKE`, jsonb containment, cursor-pagination's row-value comparison) that needed a
+SQLite-portable rewrite. None of this affects application code — `field.*` declarations and the
+REST API's wire shape are identical across both drivers.
+
+## Raw SQL in your own code
+
+`context.db` (in a `routes/*.tsx` loader/action, or any other code holding an `AnyDb` handle) is
+dialect-normalized: `db.execute(query)` always returns a plain row array on both drivers, and
+`db.run(query)` runs a query you don't need rows back from. Write raw `sql` queries with
+`drizzle-orm`'s `sql` tagged template against `db.execute()`/`db.run()` the same way regardless of
+which driver the project is configured with — see `routes/contact.tsx` in a freshly scaffolded
+project for a worked example (it computes timestamps in JS rather than calling Postgres-only
+`now()`, so the same insert works on both drivers).

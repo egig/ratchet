@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import type postgres from 'postgres';
 import { sql } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../src/core/db.js';
+import { connectTestDb } from './helpers/db.js';
 import type { CustomOperationDefinition, OperationContext } from '../src/core/index.js';
 import { generateId } from '../src/core/id.js';
 import { insertRow } from '../src/core/persistence.js';
@@ -79,7 +79,7 @@ describe('forbidLockedInUpdate (src/workspace/models/workspace.model.ts)', () =>
 
 describeIfDb('requireWorkspaceOwnership (against a live Postgres)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
 
   // No beforeEach TRUNCATE / afterAll DROP here: `workspaces`/`workspace_views` are also written
   // by `auth.test.ts` (register/setup now provision a default `Workspace`, `workspace/
@@ -88,8 +88,7 @@ describeIfDb('requireWorkspaceOwnership (against a live Postgres)', () => {
   // mid-use of races it (see auth.test.ts's own note on `users`/`sessions` for the same issue).
   // Every test below is scoped to its own freshly generated ids, so an unclean table is harmless.
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS workspaces (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
@@ -164,13 +163,12 @@ describeIfDb('requireWorkspaceOwnership (against a live Postgres)', () => {
 
 describeIfDb('Workspace lock/unlock (custom operations, src/workspace/models/workspace.model.ts)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
 
   // Shared `workspaces` table, same reasoning as `requireWorkspaceOwnership` above — no
   // beforeEach TRUNCATE / afterAll DROP; every test is scoped to its own freshly generated ids.
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS workspaces (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
@@ -273,11 +271,10 @@ describeIfDb('Workspace lock/unlock (custom operations, src/workspace/models/wor
 
 describeIfDb('createDefaultWorkspace (src/workspace/provisioning.ts, against a live Postgres)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
 
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
     // `workspaces`/`workspace_views` are shared with `auth.test.ts` and the
     // `requireWorkspaceOwnership` suite above (see that suite's note) — not truncated/dropped
     // here either. `work_titles` is exclusive to this file, so it's safe to reset between tests.

@@ -5,9 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Ratchet (`@egig/ratchet`) is a model-driven backend framework. A directory of `*.model.ts` files is
-scanned at codegen time and drives, from one declaration per table: the Drizzle/Postgres schema, Zod
-validators, a generic REST API, a React admin console SPA, and session auth. Custom logic hooks in as
-composable `pipe(...)` chains around `validate`/`persist`.
+scanned at codegen time and drives, from one declaration per table: the Drizzle schema (SQLite via
+libsql by default, Postgres also supported — see [ADR 0004](docs/adr/0004-sqlite-libsql-second-db-driver.md)),
+Zod validators, a generic REST API, a React admin console SPA, and session auth. Custom logic hooks
+in as composable `pipe(...)` chains around `validate`/`persist`.
 
 The repo ships the framework (`src/`), its docs site (`docs/`), and a working consumer app used for
 manual testing (`example/`).
@@ -52,6 +53,11 @@ docker compose -f example/docker-compose.yml up -d postgres
 export DATABASE_URL=postgres://postgres:postgres@localhost:5432/ratchet_example
 bun test
 ```
+
+These suites test against Postgres specifically (their fixture tables are hand-written Postgres
+DDL) — they're a fixed-dialect regression suite, not a stand-in for testing the SQLite path.
+`test/helpers/db.ts`'s `connectTestDb()` centralizes the postgres-js client construction each of
+them needs; the DDL itself stays per-suite.
 
 ## The consumer workflow (also how `example/` works)
 
@@ -122,6 +128,20 @@ zero fields).
   statement for non-create ops); steps after it run post-commit, non-transactionally.
   `PipelineError` carries `{ code, status, fields? }`. `requireAuth`/`requirePermission` are applied
   by the router automatically — don't compose them into model pipelines by hand.
+
+### Database drivers (`src/core/db.ts`, `db-client.ts`, `config.ts`)
+
+`FrameworkConfig.db` is a `DbConfig` discriminated union on `driver` (`'sqlite'` | `'postgres'`,
+mirroring `StorageConfig.driver`); `resolveDbConfig()` normalizes the pre-multi-driver
+`{ connectionString }` shorthand to `driver: 'postgres'`. `AnyDb` (`db.ts`) is not a bare
+`drizzle-orm` type — pg-core's `PgDatabase` and sqlite-core's `BaseSQLiteDatabase` share no common
+raw-query method (`.execute()` vs `.all()`/`.run()`), so `AnyDb` wraps whichever real instance
+`createDb()` (`db-client.ts`) builds behind one normalized `.execute()`/`.run()`/`.transaction()`
+surface, with `.dialect` riding along on the same handle every function already threads through. A
+hand-rolled deploy entry (Cloudflare/Vercel) that constructs its own drizzle client wraps it with
+`wrapDb(rawDb, dialect)` before handing it to `createRatchetApp` — see `example/deploy/`.
+`src/codegen/schema-gen.ts` is one dialect-parameterized emitter (not two files) for
+`.ratchet/schema.ts`. See [ADR 0004](docs/adr/0004-sqlite-libsql-second-db-driver.md).
 
 ### Domains
 

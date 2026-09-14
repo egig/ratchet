@@ -1,11 +1,11 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import { createDb } from '../../core/db-client.js';
 import { createRatchetApp, type RatchetBundle } from '../../server/index.js';
 import { createNodeFsAssetSource } from '../../console/node-assets.js';
 import { buildStorageAdapter } from '../../core/storage-config.js';
 import { loadConfig, resolveDirs } from '../load-config.js';
+import { resolveEnv } from '../../core/config.js';
 import { webEntrySrc } from '../build-web.js';
 
 /**
@@ -22,8 +22,7 @@ export async function runServe(cwd: string): Promise<ReturnType<typeof Bun.serve
   const bundleFile = path.join(generatedDir, 'app.ts');
   const { bundle } = (await import(pathToFileURL(bundleFile).href)) as { bundle: RatchetBundle };
 
-  const client = postgres(config.db.connectionString);
-  const db = drizzle(client);
+  const db = await createDb(config.db);
 
   // built from `config.storage` (default: local fs, sibling to `<generatedDir>/console`,
   // gitignored the same way `generatedDir` itself is) — see `buildStorageAdapter`.
@@ -38,6 +37,7 @@ export async function runServe(cwd: string): Promise<ReturnType<typeof Bun.serve
     web: bundle.web
       ? { entrySrc: await webEntrySrc(dirs), publicDir: dirs.publicDir, generatedDir }
       : undefined,
+    env: resolveEnv(config),
   });
 
   const port = Number(process.env.PORT ?? 3000);

@@ -7,12 +7,18 @@ import { writeDrizzleKitConfig } from '../drizzle-kit-config.js';
 import { runDrizzleKit } from '../run-drizzle-kit.js';
 import { buildConsoleClient, type ConsoleClientHandle } from '../build-console.js';
 import { buildWebClient } from '../build-web.js';
+import { resolveDbConfig, type FrameworkConfig } from '../../core/config.js';
 
 const DEBOUNCE_MS = 200;
 
-async function generateAndPush(cwd: string, dirs: ReturnType<typeof resolveDirs>): Promise<void> {
-  await generate({ modelsDir: dirs.modelsDir, generatedDir: dirs.generatedDir, routesDir: dirs.routesDir });
-  const drizzleConfigFile = await writeDrizzleKitConfig(cwd, dirs.generatedDir, dirs.migrationsDir);
+async function generateAndPush(cwd: string, dirs: ReturnType<typeof resolveDirs>, config: FrameworkConfig): Promise<void> {
+  await generate({
+    modelsDir: dirs.modelsDir,
+    generatedDir: dirs.generatedDir,
+    routesDir: dirs.routesDir,
+    dialect: resolveDbConfig(config.db).driver,
+  });
+  const drizzleConfigFile = await writeDrizzleKitConfig(cwd, dirs.generatedDir, dirs.migrationsDir, config.db);
   // §7: `dev` is the one place `push` is used — immediate schema sync, no migration files.
   // `--force` auto-approves data-loss statements; acceptable because this only ever targets a
   // local dev database, never staging/prod (which always goes through generate+migrate instead).
@@ -74,7 +80,7 @@ export async function runDev(cwd: string): Promise<void> {
     restarting = true;
     console.log(`[dev] ${reason} — regenerating and pushing schema...`);
     try {
-      await generateAndPush(cwd, dirs);
+      await generateAndPush(cwd, dirs, config);
     } catch (err) {
       console.error('[dev] generate/push failed, keeping the previous server running:', err instanceof Error ? err.message : err);
       restarting = false;
@@ -89,7 +95,7 @@ export async function runDev(cwd: string): Promise<void> {
     }
   }
 
-  await generateAndPush(cwd, dirs);
+  await generateAndPush(cwd, dirs, config);
   startServer();
   const consoleHandle: ConsoleClientHandle = await buildConsoleClient(dirs, { watch: true, mode: 'dev' });
   console.log(`[dev] watching ${dirs.modelsDir} for changes`);

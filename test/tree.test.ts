@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type postgres from 'postgres';
+import type { AnyDb } from '../src/core/db.js';
+import { connectTestDb } from './helpers/db.js';
 import { sql } from 'drizzle-orm';
 import { defineModel, field, persist } from '../src/core/index.js';
 import { treeFieldOf, wouldCreateTreeCycle } from '../src/core/tree.js';
@@ -95,12 +95,11 @@ const registry = { tree_test_categories: Category };
 
 describeIfDb('field.tree() end-to-end (against a live Postgres)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
   let app: ReturnType<typeof createApiRouter>;
 
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS tree_test_categories (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,

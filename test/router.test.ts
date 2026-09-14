@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import type postgres from 'postgres';
 import { sql } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../src/core/db.js';
+import { connectTestDb } from './helpers/db.js';
 import { FileStorage } from '@flystorage/file-storage';
 import { InMemoryStorageAdapter } from '@flystorage/in-memory';
 import { defineModel, field } from '../src/core/index.js';
@@ -14,7 +14,7 @@ const describeIfDb = connectionString ? describe : describe.skip;
 
 describeIfDb('createApiRouter (against a live Postgres)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
   let app: ReturnType<typeof createApiRouter>;
 
   // `api: { public: true }` — this suite tests routing/filtering/pagination mechanics, not
@@ -39,8 +39,7 @@ describeIfDb('createApiRouter (against a live Postgres)', () => {
   });
 
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS authors (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,

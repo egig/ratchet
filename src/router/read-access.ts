@@ -1,4 +1,4 @@
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import type { ReferenceFieldDefinition } from '../core/field.js';
 import type { ModelDefinition } from '../core/model.js';
 import { findRelationsTargeting } from '../core/many-to-many.js';
@@ -7,7 +7,6 @@ import { PipelineError } from '../core/pipeline.js';
 import { resolveGrantedFields, pickGrantedFields, type GrantedFields } from '../auth/pipeline.js';
 import type { FilterNode, ParsedListQuery } from './query.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 /**
  * The read-time field-permission enforcement shared between the generic `/api/:model` GET routes

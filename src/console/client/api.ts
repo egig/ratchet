@@ -65,12 +65,6 @@ export function setupStatus(): Promise<{ required: boolean }> {
 export interface SetupInput {
   email: string;
   password: string;
-  /** Credential for the `Provider` setup creates alongside the built-in `Ratchet` agent (see
-   * `POST /api/auth/setup`, src/auth/router.ts) — there's no way to seed a working `Provider`
-   * without one, so it's collected right here on the same one-time bootstrap form. */
-  providerApiKey: string;
-  providerKind?: 'anthropic' | 'openai';
-  providerUrl?: string;
 }
 
 export function setup(input: SetupInput): Promise<{ user: AuthUser; token: string }> {

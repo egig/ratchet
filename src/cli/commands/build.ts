@@ -11,5 +11,5 @@ export async function runBuild(cwd: string): Promise<void> {
 
   await buildConsoleClient(dirs, { watch: false, mode: 'prod' });
   await buildWebClient(dirs, { mode: 'prod' });
-  await buildServerBundle(cwd, dirs);
+  await buildServerBundle(cwd, dirs, config.db);
 }

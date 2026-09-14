@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import type postgres from 'postgres';
 import { sql } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../src/core/db.js';
+import { connectTestDb } from './helpers/db.js';
 import { defineModel, field } from '../src/core/index.js';
 import { generateId } from '../src/core/id.js';
 import { hashPassword } from '../src/auth/password.js';
@@ -21,7 +21,7 @@ const describeIfDb = connectionString ? describe : describe.skip;
 // takes a bare `roleId`.
 describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
 
   const Gizmo = defineModel('gizmos', {
     fields: {
@@ -32,8 +32,7 @@ describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
   const registry = { gizmos: Gizmo };
 
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS roles (

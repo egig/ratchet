@@ -1,11 +1,10 @@
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import type { ModelDefinition } from '../core/model.js';
 import { pipe, validate, persist, PipelineError, type PipelineFn } from '../core/pipeline.js';
 import { hashPassword as hashPasswordValue } from './password.js';
 import { findSessionByToken, findUserById, listPermissionsForRole, type UserRow } from './lookup.js';
 import { resolveSessionToken } from './cookie.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 /** If `ctx.input.password` (plaintext) is present, replaces it with the model's real
  * `passwordHash` column before `validate` runs — a no-op when there's nothing to hash (e.g. a

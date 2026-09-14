@@ -23,9 +23,12 @@ export async function action({ request, context }: ActionFunctionArgs) {
   if (Object.keys(errors).length > 0) return { ok: false as const, errors, values: { name, email, message } };
 
   const { db } = getWebContext(context);
+  // `now()` is Postgres-only — an ISO-8601 string computed here works on both drivers, matching
+  // how the framework's own persistence layer timestamps every row.
+  const now = new Date().toISOString();
   await db.execute(
     sql`insert into contacts (id, created_at, updated_at, name, email, message, status)
-        values (${crypto.randomUUID()}, now(), now(), ${name}, ${email}, ${message}, 'new')`,
+        values (${crypto.randomUUID()}, ${now}, ${now}, ${name}, ${email}, ${message}, 'new')`,
   );
   return { ok: true as const };
 }

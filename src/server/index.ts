@@ -1,4 +1,4 @@
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import type { RouteObject } from 'react-router';
 import { App } from '../router/http-app.js';
 import { createApiRouter } from '../router/create-router.js';
@@ -11,7 +11,6 @@ import type { DomainDefinition } from '../core/domain.js';
 import type { FileStorage } from '../core/storage.js';
 import type { ConsoleAssetSource } from '../console/router.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 /**
  * The generated model/domain bundle — `.ratchet/app.ts` (written by `ratchet generate`) exports one
@@ -44,6 +43,9 @@ export interface RatchetAppOptions {
    * the hashed `<script src>` for the client entry; `publicDir` is served at `/` before SSR.
    */
   web?: { entrySrc: string; publicDir?: string; generatedDir: string };
+  /** default `'development'`. In `'production'`, `/api/auth/setup` 404s unconditionally instead
+   * of exposing whether a root admin exists — see `resolveEnv` (`core/config.ts`). */
+  env?: 'development' | 'production';
 }
 
 /**
@@ -75,7 +77,7 @@ export async function createRatchetApp(opts: RatchetAppOptions): Promise<App> {
   //                                   console so a `consolePath: '/'` can't shadow it
   //   consolePath                   — the admin SPA
   //   /_ratchet · /                 — the web app (catch-all), only when opts.web is supplied
-  app.route('/api/auth', createAuthRouter(db));
+  app.route('/api/auth', createAuthRouter(db, { env: opts.env ?? 'development' }));
   app.route('/api/automation', createAutomationRouter(db, models));
   app.route('/api', createApiRouter(models, db, storage));
   app.route('/_site-assets', createSiteAssetsRouter(db, storage, domains));

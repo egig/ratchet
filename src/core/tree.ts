@@ -1,10 +1,9 @@
 import { sql } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from './db.js';
 import type { TreeFieldDefinition } from './field.js';
 import type { ModelDefinition } from './model.js';
 import { toSnakeCase } from './naming.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 export interface TreeField {
   key: string;
@@ -45,10 +44,8 @@ export async function wouldCreateTreeCycle(
 
   for (let depth = 0; depth < maxDepth && cursor !== null; depth++) {
     if (cursor === id) return true;
-    const rows = (await db.execute(
-      sql`SELECT ${col} AS parent_id FROM ${table} WHERE id = ${cursor} LIMIT 1`,
-    )) as unknown as { parent_id: string | null }[];
-    cursor = rows[0]?.parent_id ?? null;
+    const rows = await db.execute(sql`SELECT ${col} AS parent_id FROM ${table} WHERE id = ${cursor} LIMIT 1`);
+    cursor = (rows[0]?.parent_id as string | null | undefined) ?? null;
   }
   return false;
 }

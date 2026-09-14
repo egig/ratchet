@@ -62,5 +62,9 @@ export { generateId } from './id.js';
 
 export { normalizeTimestamps, redactSensitiveFields, deriveFileFields, deriveDomainSettingsFileFields, siteAssetUrl } from './serialize.js';
 
-export { defineConfig } from './config.js';
-export type { FrameworkConfig, StorageConfig } from './config.js';
+export { defineConfig, resolveDbConfig } from './config.js';
+export type { FrameworkConfig, StorageConfig, DbConfig } from './config.js';
+
+export { createDb } from './db-client.js';
+export { wrapDb } from './db.js';
+export type { AnyDb, Dialect } from './db.js';

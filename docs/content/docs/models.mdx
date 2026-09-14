@@ -3,7 +3,7 @@ title: Models & Fields
 description: The field vocabulary, relations, and console metadata for `defineModel()`.
 ---
 
-A model is defined once, with `defineModel()`, and drives everything else: the Postgres table, the Zod validators, the REST routes, and the console.
+A model is defined once, with `defineModel()`, and drives everything else: the SQLite/Postgres table, the Zod validators, the REST routes, and the console.
 
 ```ts
 import { defineModel, field } from '@egig/ratchet/core';
@@ -68,7 +68,7 @@ A `file` field stores a reference (`{ key, filename, mimeType, size }`, jsonb), 
 
 ```ts
 export default defineConfig({
-  db: { connectionString: process.env.DATABASE_URL! },
+  db: { driver: 'sqlite', url: process.env.DATABASE_URL ?? 'file:./local.db' },
   storage: { driver: 's3', bucket: process.env.S3_BUCKET!, region: 'us-east-1' },
   // driver: 'local' (default — no config needed) | 's3' | 'gcs' | 'azure'
 });

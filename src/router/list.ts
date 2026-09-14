@@ -1,5 +1,5 @@
 import { sql, type Name, type SQL } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb, Dialect } from '../core/db.js';
 import type { ReferenceFieldDefinition, TreeFieldDefinition } from '../core/field.js';
 import type { ModelDefinition } from '../core/model.js';
 import {
@@ -15,14 +15,9 @@ import { deriveFileFields, normalizeTimestamps, redactSensitiveFields } from '..
 import { allColumnKeys } from './columns.js';
 import { encodeCursor, type FilterClause, type FilterNode, type ParsedListQuery } from './query.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 function tableIdent(model: ModelDefinition): Name {
   return sql.identifier(model.tableName);
-}
-
-async function execRows(db: AnyDb, query: SQL): Promise<Record<string, unknown>[]> {
-  return (await db.execute(query)) as unknown as Record<string, unknown>[];
 }
 
 interface IncludePlan {
@@ -119,8 +114,7 @@ async function attachManyToManyIncludes(
     const targetModel = plan.direction === 'forward' ? registry[plan.relation.fieldDef.targetModel] : plan.relation.sourceModel;
     if (!targetModel) continue; // validated already at parseInclude time — defensive only
 
-    const junctionRows = await execRows(
-      db,
+    const junctionRows = await db.execute(
       sql`SELECT ${sql.identifier(toSnakeCase(ownColumn))} AS own_id, ${sql.identifier(toSnakeCase(foreignColumn))} AS foreign_id
           FROM ${tableIdent(junctionModel)}
           WHERE ${sql.identifier(toSnakeCase(ownColumn))} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)}) AND deleted_at IS NULL`,
@@ -130,8 +124,7 @@ async function attachManyToManyIncludes(
     const targetById = new Map<string, Record<string, unknown>>();
     if (foreignIds.length > 0) {
       const targetCols = allColumnKeys(targetModel).map((key) => sql`${sql.identifier(toSnakeCase(key))} AS ${sql.identifier(key)}`);
-      const targetRows = await execRows(
-        db,
+      const targetRows = await db.execute(
         sql`SELECT ${sql.join(targetCols, sql`, `)} FROM ${tableIdent(targetModel)}
             WHERE id IN (${sql.join(foreignIds.map((id) => sql`${id}`), sql`, `)}) AND deleted_at IS NULL`,
       );
@@ -198,8 +191,7 @@ async function attachReferenceToManyIncludes(
     const inverseCol = inverseColumnName(plan.relation);
 
     const targetCols = allColumnKeys(targetModel).map((key) => sql`${sql.identifier(toSnakeCase(key))} AS ${sql.identifier(key)}`);
-    const childRows = await execRows(
-      db,
+    const childRows = await db.execute(
       sql`SELECT ${sql.join(targetCols, sql`, `)} FROM ${sql.identifier(targetModelName)}
           WHERE ${sql.identifier(toSnakeCase(inverseCol))} IN (${sql.join(parentIds.map((id) => sql`${id}`), sql`, `)}) AND deleted_at IS NULL`,
     );
@@ -218,7 +210,7 @@ async function attachReferenceToManyIncludes(
   }
 }
 
-function filterClauseSql(model: ModelDefinition, clause: FilterClause): SQL {
+function filterClauseSql(model: ModelDefinition, clause: FilterClause, dialect: Dialect): SQL {
   const col = sql`t.${sql.identifier(toSnakeCase(clause.field))}`;
   switch (clause.op) {
     case '=':
@@ -236,7 +228,9 @@ function filterClauseSql(model: ModelDefinition, clause: FilterClause): SQL {
     case 'like':
       return sql`${col} LIKE ${clause.value}`;
     case 'ilike':
-      return sql`${col} ILIKE ${clause.value}`;
+      // SQLite has no ILIKE — LOWER()-wrapped LIKE is portable and doesn't depend on the
+      // process-wide `PRAGMA case_sensitive_like` setting the way plain LIKE would.
+      return dialect === 'sqlite' ? sql`LOWER(${col}) LIKE LOWER(${clause.value})` : sql`${col} ILIKE ${clause.value}`;
     case 'is':
       if (clause.value !== null) {
         throw new PipelineError({
@@ -274,13 +268,13 @@ function filterClauseSql(model: ModelDefinition, clause: FilterClause): SQL {
   }
 }
 
-function filterNodeSql(model: ModelDefinition, node: FilterNode): SQL {
-  if (!('logic' in node)) return filterClauseSql(model, node);
+function filterNodeSql(model: ModelDefinition, node: FilterNode, dialect: Dialect): SQL {
+  if (!('logic' in node)) return filterClauseSql(model, node, dialect);
   // an empty group is vacuous: AND of nothing is true, OR of nothing is false.
   if (node.conditions.length === 0) return node.logic === 'and' ? sql`TRUE` : sql`FALSE`;
   const joiner = node.logic === 'and' ? sql` AND ` : sql` OR `;
   return sql`(${sql.join(
-    node.conditions.map((c) => filterClauseSql(model, c)),
+    node.conditions.map((c) => filterClauseSql(model, c, dialect)),
     joiner,
   )})`;
 }
@@ -362,16 +356,19 @@ export async function listRows(
 
   const whereParts: SQL[] = [];
   if (!query.includeDeleted) whereParts.push(sql`t.deleted_at IS NULL`);
-  for (const node of query.filters) whereParts.push(filterNodeSql(model, node));
+  for (const node of query.filters) whereParts.push(filterNodeSql(model, node, db.dialect));
 
   // cursor-mode is opt-in via `?cursor=` and `query.ts` guarantees exactly one sort key for it.
   const cursorKey = query.cursorMode ? query.sort[0]! : undefined;
 
   if (cursorKey && query.cursor) {
     const sortCol = sql`t.${sql.identifier(toSnakeCase(cursorKey.field))}`;
+    // Row-value tuple comparison (`(a, b) > (x, y)`) is Postgres-only — SQLite has no such syntax.
+    // The boolean-expansion form below is equivalent and portable on both dialects, so it's used
+    // unconditionally rather than branched.
     const cmp = cursorKey.direction === 'asc' ? sql`>` : sql`<`;
     whereParts.push(
-      sql`(${sortCol}, t.id) ${cmp} (${query.cursor.value}, ${query.cursor.id})`,
+      sql`(${sortCol} ${cmp} ${query.cursor.value} OR (${sortCol} = ${query.cursor.value} AND t.id ${cmp} ${query.cursor.id}))`,
     );
   }
 
@@ -393,9 +390,9 @@ export async function listRows(
 
   if (cursorKey) {
     // cursor mode (§5): fetch one extra row to know whether another page exists.
-    const rows = (await db.execute(
+    const rows = await db.execute(
       sql`SELECT ${selectCols} FROM ${tableIdent} AS t${joinClause}${whereSql}${orderSql} LIMIT ${query.limit + 1}`,
-    )) as unknown as Record<string, unknown>[];
+    );
 
     const hasMore = rows.length > query.limit;
     const page = rows.slice(0, query.limit).map((r) => nestRow(model, r, includes));
@@ -410,13 +407,13 @@ export async function listRows(
     return { mode: 'cursor', rows: page, nextCursor, hasMore };
   }
 
-  const rows = (await db.execute(
+  const rows = await db.execute(
     sql`SELECT ${selectCols} FROM ${tableIdent} AS t${joinClause}${whereSql}${orderSql} LIMIT ${query.limit} OFFSET ${query.offset}`,
-  )) as unknown as Record<string, unknown>[];
+  );
 
-  const countRows = (await db.execute(
-    sql`SELECT COUNT(*)::int AS count FROM ${tableIdent} AS t${whereSql}`,
-  )) as unknown as { count: number }[];
+  // No `::int` cast — that's Postgres-only syntax. `COUNT(*)` is already integer-valued on both
+  // dialects; the coercion below just protects against a driver returning it as a bigint/string.
+  const countRows = await db.execute(sql`SELECT COUNT(*) AS count FROM ${tableIdent} AS t${whereSql}`);
 
   const page = rows.map((r) => nestRow(model, r, includes));
   await attachManyToManyIncludes(db, registry, page, m2mPlans);
@@ -425,7 +422,7 @@ export async function listRows(
   return {
     mode: 'offset',
     rows: page,
-    total: countRows[0]?.count ?? 0,
+    total: Number(countRows[0]?.count ?? 0),
     limit: query.limit,
     offset: query.offset,
   };
@@ -446,9 +443,9 @@ export async function getOneRow(
   const selectCols = selectListSql(model, includes);
   const deletedClause = opts.includeDeleted ? sql`` : sql` AND t.deleted_at IS NULL`;
 
-  const rows = (await db.execute(
+  const rows = await db.execute(
     sql`SELECT ${selectCols} FROM ${tableIdent} AS t${joinClause} WHERE t.id = ${id}${deletedClause} LIMIT 1`,
-  )) as unknown as Record<string, unknown>[];
+  );
 
   if (!rows[0]) return null;
   const row = nestRow(model, rows[0], includes);

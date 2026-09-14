@@ -1,29 +1,29 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import { ApiRequestError } from './api.js';
 import { useAuth } from './auth.js';
+import { NotFoundPage } from './NotFoundPage.js';
 import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
 import { Label } from './ui/label.js';
 
 /** Shown instead of `/login` until `GET /api/auth/setup` reports a root admin already exists
  * (see `useAuth().setupRequired`). Creates the one `*:*` user via `POST /api/auth/setup` and
- * signs them in, same as a fresh login — and, in the same request, a `Provider` (this form's
- * API key) plus the built-in `Ratchet` `Agent` wired to the new Root role, so the instance has a
- * chat-ready assistant from the first login rather than an empty `Agents` list. */
+ * signs them in, same as a fresh login. Connecting a Model Provider for the built-in `Ratchet`
+ * `Agent` is a separate step, done from the chat UI's empty-state once logged in — not part of
+ * this form. Renders `NotFoundPage` instead of redirecting to `/login` once setup isn't
+ * required, so a completed instance gives no more away than a production instance that disguises
+ * `/setup` as missing entirely (see `src/auth/router.ts`). */
 export function SetupPage() {
   const { loading, setupRequired, completeSetup } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [providerKind, setProviderKind] = useState<'anthropic' | 'openai'>('anthropic');
-  const [providerApiKey, setProviderApiKey] = useState('');
-  const [providerUrl, setProviderUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  if (!loading && !setupRequired) return <Navigate to="/login" replace />;
+  if (!loading && !setupRequired) return <NotFoundPage />;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -34,13 +34,7 @@ export function SetupPage() {
     setSubmitting(true);
     setError(null);
     try {
-      await completeSetup({
-        email,
-        password,
-        providerApiKey,
-        providerKind,
-        providerUrl: providerUrl.length > 0 ? providerUrl : undefined,
-      });
+      await completeSetup({ email, password });
       navigate('/', { replace: true });
     } catch (err) {
       setError(
@@ -90,47 +84,6 @@ export function SetupPage() {
             required
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-          />
-        </div>
-
-        <hr className="mb-4 border-border" />
-        <p className="mb-3 text-sm text-muted-foreground">
-          This also sets up <span className="font-medium text-foreground">Ratchet</span>, the built-in assistant — it needs a
-          model provider to talk to.
-        </p>
-
-        <div className="mb-3 space-y-1.5">
-          <Label htmlFor="setup-provider">Provider</Label>
-          <select
-            id="setup-provider"
-            value={providerKind}
-            onChange={(e) => setProviderKind(e.target.value as 'anthropic' | 'openai')}
-            className="h-8 w-full rounded-md border border-border bg-background px-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-          >
-            <option value="anthropic">Anthropic</option>
-            <option value="openai">OpenAI-compatible</option>
-          </select>
-        </div>
-
-        <div className="mb-3 space-y-1.5">
-          <Label htmlFor="setup-provider-key">API key</Label>
-          <Input
-            id="setup-provider-key"
-            type="password"
-            required
-            value={providerApiKey}
-            onChange={(e) => setProviderApiKey(e.target.value)}
-          />
-        </div>
-
-        <div className="mb-4 space-y-1.5">
-          <Label htmlFor="setup-provider-url">Base URL (optional)</Label>
-          <Input
-            id="setup-provider-url"
-            type="url"
-            placeholder="https://..."
-            value={providerUrl}
-            onChange={(e) => setProviderUrl(e.target.value)}
           />
         </div>
 

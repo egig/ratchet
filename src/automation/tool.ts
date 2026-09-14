@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import type { CustomOperationDefinition, ModelDefinition, OperationContext, PipelineFn } from '../core/index.js';
 import { buildCreateSchema, buildUpdateSchema, buildParamsSchema, PipelineError } from '../core/index.js';
 import { authorizeRequest, resolveGrantedFields, assertWriteFieldsAllowed, pickGrantedFields } from '../auth/pipeline.js';
@@ -9,7 +9,6 @@ import { parseListQuery, parseInclude } from '../router/query.js';
 import { assertReadFieldsAllowed, filterIncludedRelations } from '../router/read-access.js';
 import type { ToolSpec } from './events.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 // The three builtin write verbs, exactly as `core`'s `Operation` names them — kept as its own
 // list here so `expandGrant` has one source of truth for "which verbs every model always has".

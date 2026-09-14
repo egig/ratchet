@@ -113,8 +113,9 @@ export async function runInit(cwd: string): Promise<void> {
   console.log('');
   console.log('next steps:');
   console.log('  1. bun install');
-  console.log('  2. set DATABASE_URL');
-  console.log('  3. bun run generate   (writes .ratchet/* + SQL migration files)');
-  console.log('  4. bun run migrate && bun run serve   (or `bun run dev` for local push-based iteration)');
-  console.log('  5. open the console, complete setup, then add your pages under Pages');
+  console.log('  2. bun run generate   (writes .ratchet/* + SQL migration files — no DATABASE_URL needed, uses ./local.db by default)');
+  console.log('  3. bun run migrate && bun run serve   (or `bun run dev` for local push-based iteration)');
+  console.log('  4. open the console, complete setup, then add your pages under Pages');
+  console.log('');
+  console.log('using Postgres or Turso instead of the local SQLite file? set DATABASE_URL (and driver: \'postgres\' in ratchet.config.ts for Postgres) before step 2.');
 }

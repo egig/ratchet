@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/react';
-import { ChatRuntimeProvider, Thread, NewChatBar } from './chat/index.js';
+import { ChatRuntimeProvider, Thread, NewChatBar, ConnectProviderForm, useAgents } from './chat/index.js';
 
 /** Compact thread switcher for the narrow panel — a `<select>` over every non-archived thread,
  * plus whatever is active. The console shell's `ConsoleChatPanel` reuses this same body. */
@@ -38,13 +38,20 @@ export function ChatPanelBody({
   onAgentIdChange: (id: string) => void;
   emptyHint?: string;
 }) {
+  const { agents } = useAgents();
+  const activeAgent = agents.find((a) => a.id === agentId);
+
   return (
     <>
       <NewChatBar agentId={agentId} onAgentIdChange={onAgentIdChange} />
       <CompactThreadSwitcher />
-      <div className="min-h-0 flex-1">
-        <Thread emptyHint={emptyHint} />
-      </div>
+      {activeAgent && !activeAgent.providerId ? (
+        <ConnectProviderForm agentId={activeAgent.id} agentName={activeAgent.name} />
+      ) : (
+        <div className="min-h-0 flex-1">
+          <Thread emptyHint={emptyHint} />
+        </div>
+      )}
     </>
   );
 }

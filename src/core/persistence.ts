@@ -1,21 +1,15 @@
 import { sql, type Name, type SQL } from 'drizzle-orm';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from './db.js';
 import type { FieldDefinition } from './field.js';
 import type { ModelDefinition } from './model.js';
 import { generateId } from './id.js';
 import { rowToCamelCase, toSnakeCase } from './naming.js';
 import { normalizeTimestamps } from './serialize.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 type Chunk = SQL | Name;
 
 function tableIdent(model: ModelDefinition): Name {
   return sql.identifier(model.tableName);
-}
-
-async function execRows(db: AnyDb, query: SQL): Promise<Record<string, unknown>[]> {
-  const result = await db.execute(query);
-  return result as unknown as Record<string, unknown>[];
 }
 
 /**
@@ -40,8 +34,7 @@ export async function fetchRow(
   opts: { includeDeleted?: boolean } = {},
 ): Promise<Record<string, unknown> | null> {
   const deletedClause = opts.includeDeleted ? sql`` : sql` AND ${sql.identifier('deleted_at')} IS NULL`;
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`SELECT * FROM ${tableIdent(model)} WHERE ${sql.identifier('id')} = ${id}${deletedClause} LIMIT 1`,
   );
   return rows[0] ? normalizeTimestamps(model, rowToCamelCase(rows[0])) : null;
@@ -57,8 +50,7 @@ export async function listRowsByField(
   fieldKey: string,
   value: unknown,
 ): Promise<Record<string, unknown>[]> {
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`SELECT * FROM ${tableIdent(model)} WHERE ${sql.identifier(toSnakeCase(fieldKey))} = ${value} AND ${sql.identifier('deleted_at')} IS NULL`,
   );
   return rows.map((row) => normalizeTimestamps(model, rowToCamelCase(row)));
@@ -74,8 +66,7 @@ export async function listChildIds(
   inverseCol: string,
   parentId: string,
 ): Promise<string[]> {
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`SELECT id FROM ${sql.identifier(targetModelName)} WHERE ${sql.identifier(toSnakeCase(inverseCol))} = ${parentId} AND ${sql.identifier('deleted_at')} IS NULL`,
   );
   return rows.map((row) => String(row.id));
@@ -93,7 +84,7 @@ export async function setInverseForeignKey(
   childId: string,
   parentId: string | null,
 ): Promise<void> {
-  await db.execute(
+  await db.run(
     sql`UPDATE ${sql.identifier(targetModelName)} SET ${sql.identifier(toSnakeCase(inverseCol))} = ${parentId} WHERE ${sql.identifier('id')} = ${childId} AND ${sql.identifier('deleted_at')} IS NULL`,
   );
 }
@@ -126,8 +117,7 @@ export async function insertRow(
     values.push(sql`${toDriverValue(fieldDef, value)}`);
   }
 
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`INSERT INTO ${tableIdent(model)} (${sql.join(columns, sql`, `)}) VALUES (${sql.join(values, sql`, `)}) RETURNING *`,
   );
   const row = rows[0];
@@ -150,8 +140,7 @@ export async function updateRow(
     setParts.push(sql`${sql.identifier(toSnakeCase(key))} = ${toDriverValue(fieldDef, input[key])}`);
   }
 
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`UPDATE ${tableIdent(model)} SET ${sql.join(setParts, sql`, `)} WHERE ${sql.identifier('id')} = ${id} AND ${sql.identifier('deleted_at')} IS NULL RETURNING *`,
   );
   return rows[0] ? normalizeTimestamps(model, rowToCamelCase(rows[0])) : null;
@@ -163,13 +152,12 @@ export async function softRemoveRow(
   id: string,
 ): Promise<Record<string, unknown> | null> {
   const now = new Date().toISOString();
-  const rows = await execRows(
-    db,
+  const rows = await db.execute(
     sql`UPDATE ${tableIdent(model)} SET ${sql.identifier('deleted_at')} = ${now}, ${sql.identifier('updated_at')} = ${now} WHERE ${sql.identifier('id')} = ${id} AND ${sql.identifier('deleted_at')} IS NULL RETURNING *`,
   );
   return rows[0] ? normalizeTimestamps(model, rowToCamelCase(rows[0])) : null;
 }
 
 export async function hardRemoveRow(db: AnyDb, model: ModelDefinition, id: string): Promise<void> {
-  await db.execute(sql`DELETE FROM ${tableIdent(model)} WHERE ${sql.identifier('id')} = ${id}`);
+  await db.run(sql`DELETE FROM ${tableIdent(model)} WHERE ${sql.identifier('id')} = ${id}`);
 }

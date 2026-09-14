@@ -54,11 +54,34 @@ export type StorageConfig =
       prefix?: string;
     };
 
+/** `url`/`authToken` deliberately mirror `@libsql/client`'s own constructor shape 1:1 — `url`
+ * covers all three forms it accepts: `file:./local.db` (the scaffolded zero-setup default),
+ * `file:/abs/path.db`, or `libsql://<db>.turso.io` for hosted Turso (`authToken` only meaningful
+ * for the remote case) — so switching from a local file to Turso later is a config-only change,
+ * not a driver swap. The bare `{ connectionString }` arm (no `driver` key) is the pre-multi-driver
+ * shorthand every existing Postgres config already matches — kept working via `resolveDbConfig`. */
+export type DbConfig =
+  | { driver: 'postgres'; connectionString: string }
+  | { driver: 'sqlite'; url: string; authToken?: string }
+  | { connectionString: string };
+
+// A bare/relative path (`./data.db`, `data.db`, `/abs/path.db`, `:memory:`) has no URI scheme —
+// @libsql/client rejects it outright with an opaque `URL_INVALID` rather than treating it as a
+// file path. `file:` is the only scheme that makes sense to infer (vs `libsql:`/`http(s):`/
+// `ws(s):`, which are never what a bare path means) — so prepend it whenever `url` doesn't already
+// start with one. `:memory:` becomes `file::memory:`, which is @libsql/client's own documented form.
+const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
+export function resolveDbConfig(db: DbConfig): { driver: 'postgres'; connectionString: string } | { driver: 'sqlite'; url: string; authToken?: string } {
+  if (!('driver' in db)) return { driver: 'postgres', connectionString: db.connectionString };
+  if (db.driver === 'sqlite' && !URI_SCHEME_RE.test(db.url)) {
+    return { ...db, url: `file:${db.url}` };
+  }
+  return db;
+}
+
 export interface FrameworkConfig {
-  db: {
-    /** e.g. `process.env.DATABASE_URL!` — kept out of the config file as a literal (Q8-adjacent hygiene). */
-    connectionString: string;
-  };
+  db: DbConfig;
   /** `file` field blob backend — see `StorageConfig`. default: local fs under
    * `<generatedDir>/storage` (today's zero-config behavior), same as omitting this entirely. */
   storage?: StorageConfig;
@@ -84,8 +107,17 @@ export interface FrameworkConfig {
   consolePath?: string;
   /** default: none (falls back to "Ratchet console") — see `ConsoleBrandConfig`. */
   brand?: ConsoleBrandConfig;
+  /** default: `'production'` when `process.env.NODE_ENV === 'production'`, else `'development'`.
+   * In production, `/api/auth/setup` (and the console's `/setup` screen) 404 unconditionally
+   * instead of exposing whether a root admin exists — use `ratchet create-admin` to bootstrap
+   * the first admin there instead. */
+  env?: 'development' | 'production';
 }
 
 export function defineConfig(config: FrameworkConfig): FrameworkConfig {
   return config;
+}
+
+export function resolveEnv(config: FrameworkConfig): 'development' | 'production' {
+  return config.env ?? (process.env.NODE_ENV === 'production' ? 'production' : 'development');
 }

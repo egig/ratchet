@@ -1,30 +1,19 @@
 import { App, type Ctx, setCookie, deleteCookie } from '../router/http-app.js';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import type { OperationContext } from '../core/pipeline.js';
 import { PipelineError } from '../core/pipeline.js';
 import { redactSensitiveFields } from '../core/serialize.js';
 import { generateId } from '../core/id.js';
-import { insertRow, updateRow } from '../core/persistence.js';
 import { toErrorResponse } from '../router/errors.js';
 import { readJsonBody } from '../router/create-router.js';
-import { Workspace, DEFAULT_WORKSPACE_NAME } from '../workspace/index.js';
-import { Agent, Provider } from '../automation/models/index.js';
-import { User, Role, registerPipeline } from './models/index.js';
+import { User, registerPipeline } from './models/index.js';
 import { resolveSessionUser } from './pipeline.js';
-import {
-  deleteSessionByToken,
-  findRoleByName,
-  findUserByEmail,
-  hasRootAdmin,
-  insertSession,
-  listPermissionsForRole,
-  type UserRow,
-} from './lookup.js';
-import { hashPassword as hashPasswordValue, verifyPassword } from './password.js';
+import { provisionRootAdmin } from './provisioning.js';
+import { deleteSessionByToken, findUserByEmail, hasRootAdmin, insertSession, listPermissionsForRole, type UserRow } from './lookup.js';
+import { verifyPassword } from './password.js';
 import { generateToken, sessionExpiry } from './token.js';
 import { resolveSessionToken, SESSION_COOKIE_NAME } from './cookie.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 function requireString(input: Record<string, unknown>, key: string): string {
   const value = input[key];
@@ -68,27 +57,14 @@ async function userWithPermissions(db: AnyDb, user: UserRow): Promise<Record<str
   return { ...redactUser(user), permissions };
 }
 
-const ROOT_ROLE_NAME = 'Root';
-const RATCHET_AGENT_NAME = 'Ratchet';
-const RATCHET_PROVIDER_NAME = 'Ratchet Provider';
-const RATCHET_SYSTEM_PROMPT =
-  "You are Ratchet, this instance's built-in assistant. You hold the Root role, so every model " +
-  'and operation this app exposes is available to you as a tool — use that access thoughtfully on ' +
-  "the requesting user's behalf.";
-
-/** Reads/validates the provider fields `POST /setup` collects for the Ratchet agent below.
- * `kind` mirrors `Provider.kind`'s own enum (provider.model.ts) — there's no model-level `validate`
- * step in this raw `insertRow` path (same as `email`/`password` above), so it's checked by hand. */
-function resolveProviderKind(body: Record<string, unknown>): 'anthropic' | 'openai' {
-  const kind = body['providerKind'];
-  if (kind === undefined) return 'anthropic';
-  if (kind === 'anthropic' || kind === 'openai') return kind;
-  throw new PipelineError({ code: 'VALIDATION_ERROR', status: 400, fields: { providerKind: "must be 'anthropic' or 'openai'" } });
-}
-
 /** `/api/auth/*` — setup/register/login/logout/me. Mount before the generic `/api/:model`
- * router (src/router/create-router.ts) so this more specific prefix wins. */
-export function createAuthRouter(db: AnyDb): App {
+ * router (src/router/create-router.ts) so this more specific prefix wins.
+ *
+ * `opts.env === 'production'` disguises `/setup` entirely: both routes 404 exactly as a genuinely
+ * unmatched route would, so the endpoint's presence never reveals whether a root admin exists.
+ * Production's only bootstrap path is the `ratchet create-admin` CLI command, which calls
+ * `provisionRootAdmin` directly against the DB. */
+export function createAuthRouter(db: AnyDb, opts: { env?: 'development' | 'production' } = {}): App {
   const app = new App();
 
   app.onError((err, c) => {
@@ -97,71 +73,17 @@ export function createAuthRouter(db: AnyDb): App {
   });
 
   app.get('/setup', async (c) => {
+    if (opts.env === 'production') throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
     return c.json({ data: { required: !(await hasRootAdmin(db)) } });
   });
 
-  /** One-time bootstrap: creates the first user with unrestricted (`*:*`) access, so a fresh
-   * instance has a way in without a DB console. Unauthenticated, but self-gating — re-checks
-   * `hasRootAdmin` inside the transaction so a concurrent double-submit can't create two. Becomes
-   * a permanent 409 once any user holds `*:*`, regardless of that user's `active` state (see
-   * `hasRootAdmin`'s doc comment).
-   *
-   * Also provisions the framework's first built-in `Agent` — named `Ratchet`, `roleId` set to the
-   * same Root role, so it can call every tool from turn one (docs/guide/auth.md's "Agents derive
-   * their tools from a `Role`"). `Agent.providerId` is required, and there's no way to seed a
-   * working `Provider` without real credentials, so this endpoint also collects one API key
-   * (`providerApiKey`, `providerKind`, `providerUrl`) and creates that `Provider` alongside it —
-   * a fresh instance ends setup with a chat-ready assistant, not just an empty `Agents` list. */
   app.post('/setup', async (c) => {
+    if (opts.env === 'production') throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
     const body = await readJsonBody(c);
     const email = requireString(body, 'email');
     const password = requireString(body, 'password');
-    const providerApiKey = requireString(body, 'providerApiKey');
-    const providerKind = resolveProviderKind(body);
-    const providerUrl = typeof body['providerUrl'] === 'string' && body['providerUrl'].length > 0 ? (body['providerUrl'] as string) : undefined;
 
-    const user = await db.transaction(async (tx) => {
-      const txDb = tx as AnyDb;
-      if (await hasRootAdmin(txDb)) {
-        throw new PipelineError({ code: 'SETUP_ALREADY_COMPLETE', status: 409, message: 'a root admin already exists' });
-      }
-
-      const role = (await findRoleByName(txDb, ROOT_ROLE_NAME)) ?? (await insertRow(txDb, Role, { name: ROOT_ROLE_NAME }));
-      const permissions = await listPermissionsForRole(txDb, role.id as string);
-      if (!permissions.some((p) => p.resource === '*' && p.action === '*')) {
-        // `field: '*'` isn't optional here even though `action: '*'` already implies the
-        // fieldless `remove` action — field-level permission is checked independently of
-        // action-level (docs/guide/auth.md), so an explicit field value is still required for the
-        // field-shaped actions ('*' covers read/create/update too). Without it, secure-by-default
-        // field permission would brick the console immediately after setup: the root admin could
-        // log in but see/write no fields on any model, with no way to grant the first field
-        // permission. Self-heals an existing `Root` role that predates a `*:*` grant by appending
-        // one rather than replacing the array outright.
-        await updateRow(txDb, Role, role.id as string, { permissions: [...permissions, { resource: '*', action: '*', field: '*' }] });
-      }
-
-      const created = await insertRow(txDb, User, { email, passwordHash: await hashPasswordValue(password), roleId: role.id });
-      // root admin has no workTitleId (the inverse FK of WorkTitle's `users` referenceToMany; there's
-      // no WorkTitle yet on a fresh instance), so this is
-      // always the blank default — see `workspace/provisioning.ts`'s `createDefaultWorkspace`,
-      // which this mirrors for the one user-creation path that doesn't run through a pipe().
-      await insertRow(txDb, Workspace, { userId: created.id, name: DEFAULT_WORKSPACE_NAME });
-
-      const provider = await insertRow(txDb, Provider, {
-        name: RATCHET_PROVIDER_NAME,
-        kind: providerKind,
-        url: providerUrl,
-        apiKey: providerApiKey,
-      });
-      await insertRow(txDb, Agent, {
-        name: RATCHET_AGENT_NAME,
-        systemPrompt: RATCHET_SYSTEM_PROMPT,
-        providerId: provider.id,
-        roleId: role.id,
-      });
-
-      return created;
-    });
+    const user = await provisionRootAdmin(db, { email, password });
 
     const token = await issueSession(db, user.id as string);
     setSessionCookie(c, token);

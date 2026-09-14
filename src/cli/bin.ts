@@ -7,6 +7,7 @@ import { runStudio } from './commands/studio.js';
 import { runDev } from './commands/dev.js';
 import { runServe } from './commands/serve.js';
 import { runBuild } from './commands/build.js';
+import { runCreateAdmin } from './commands/create-admin.js';
 
 // Every command below resolves paths off `process.cwd()` — Bun automatically loads `.env` (and
 // `.env.local`, etc.) from that same directory (e.g. `DATABASE_URL`) at startup, before any
@@ -62,6 +63,15 @@ program
   .description('Build the console client (Bun.build + Tailwind, hashed + manifest) and a bundled server artifact')
   .action(async () => {
     await runBuild(process.cwd());
+  });
+
+program
+  .command('create-admin')
+  .description('Create the root admin user directly against the DB — the production bootstrap path, since /setup is disabled in production')
+  .option('--email <email>')
+  .option('--password <password>')
+  .action(async (opts: { email?: string; password?: string }) => {
+    await runCreateAdmin(process.cwd(), opts);
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {

@@ -1,4 +1,4 @@
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from './db.js';
 import type { ModelDefinition } from './model.js';
 import { buildCreateSchema, buildUpdateSchema } from './validation.js';
 import { fetchRow, hardRemoveRow, insertRow, listChildIds, listRowsByField, setInverseForeignKey, softRemoveRow, updateRow } from './persistence.js';
@@ -24,7 +24,6 @@ import { treeFieldOf, wouldCreateTreeCycle } from './tree.js';
 // three literals stay for editor autocomplete on the common cases.
 export type Operation = 'create' | 'update' | 'remove' | (string & {});
 
-type AnyDb = PgDatabase<any, any, any>;
 
 export interface OperationContext {
   operation: Operation;

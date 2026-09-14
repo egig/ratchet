@@ -1,3 +1,4 @@
+import type { Dialect } from '../core/db.js';
 import type { FieldDefinition } from '../core/field.js';
 import type { ModelDefinition } from '../core/model.js';
 import { buildJunctionModel, junctionColumnsOf, manyToManyFieldsOf, type ManyToManyRelation } from '../core/many-to-many.js';
@@ -11,12 +12,23 @@ function tableVar(modelName: string): string {
   return `${modelName}Table`;
 }
 
-function columnExpr(key: string, f: FieldDefinition): string {
+/** `sqlite-core` has no `varchar`/`uuid`/`jsonb`/`timestamp` builders and no fixed-precision
+ * `numeric` — see the per-kind comments below for the SQLite equivalent chosen and why (mirrors
+ * the rationale recorded in `docs/adr/0004-sqlite-libsql-second-db-driver.md`). */
+function columnExpr(key: string, f: FieldDefinition, dialect: Dialect): string {
   const col = toSnakeCase(key);
   let expr: string;
   switch (f.kind) {
     case 'string':
-      expr = f.maxLength !== undefined ? `varchar('${col}', { length: ${f.maxLength} })` : `varchar('${col}')`;
+      // sqlite-core has no varchar builder (no length-enforced string type) — `maxLength` becomes
+      // advisory (Zod-validation-only) under sqlite, same as it already is for anything beyond
+      // what the DB enforces on Postgres.
+      expr =
+        dialect === 'postgres'
+          ? f.maxLength !== undefined
+            ? `varchar('${col}', { length: ${f.maxLength} })`
+            : `varchar('${col}')`
+          : `text('${col}')`;
       break;
     case 'text':
       expr = `text('${col}')`;
@@ -25,26 +37,43 @@ function columnExpr(key: string, f: FieldDefinition): string {
       expr = `integer('${col}')`;
       break;
     case 'decimal':
-      expr = `numeric('${col}', { precision: ${f.precision}, scale: ${f.scale} })`;
+      // sqlite-core's `numeric()` takes no precision/scale (NUMERIC affinity only, no fixed
+      // precision at the storage level) — same "advisory beyond the DB" tradeoff as `string` above.
+      expr = dialect === 'postgres' ? `numeric('${col}', { precision: ${f.precision}, scale: ${f.scale} })` : `numeric('${col}')`;
       break;
     case 'boolean':
-      expr = `boolean('${col}')`;
+      // sqlite-core has no native boolean builder — `integer(mode: 'boolean')` is its documented
+      // idiom, storing 0/1 and round-tripping as a JS boolean transparently.
+      expr = dialect === 'postgres' ? `boolean('${col}')` : `integer('${col}', { mode: 'boolean' })`;
       break;
     case 'datetime':
-      // Q25: timestamptz, never bare timestamp — avoids the classic Postgres session-timezone footgun.
-      expr = `timestamp('${col}', { withTimezone: true })`;
+      // Postgres: Q25, timestamptz not bare timestamp — avoids the classic session-timezone
+      // footgun by always storing/reading an absolute UTC instant. SQLite has no timezone-aware
+      // column type at all; `text(mode: 'string')` storing the same ISO-8601 UTC string
+      // `toDriverValue` (core/persistence.ts) already writes for Postgres is the SQLite
+      // equivalent — an absolute instant either way, and it keeps `core/serialize.ts`'s raw-query
+      // timestamp handling convergent across dialects rather than needing a second text format.
+      expr = dialect === 'postgres' ? `timestamp('${col}', { withTimezone: true })` : `text('${col}', { mode: 'string' })`;
       break;
     case 'enum':
-      // §4: varchar + CHECK, not native Postgres ENUM (see the check() constraint emitted below).
-      expr = `varchar('${col}')`;
+      // §4: varchar/text + CHECK, not a native enum type — see the check() constraint emitted
+      // below (extraConfigLines). sqlite-core's check() API is the same shape as pg-core's.
+      expr = dialect === 'postgres' ? `varchar('${col}')` : `text('${col}')`;
       break;
     case 'json':
     case 'file':
-      expr = `jsonb('${col}')`;
+      // sqlite-core's documented JSON idiom: `text(mode: 'json')` round-trips a JS value through
+      // `JSON.stringify`/`parse` transparently, matching jsonb's ergonomics from the caller's side.
+      expr = dialect === 'postgres' ? `jsonb('${col}')` : `text('${col}', { mode: 'json' })`;
       break;
     case 'reference':
-      // Q6: RESTRICT — refuse a hard-delete that would orphan referencing rows.
-      expr = `uuid('${col}').references(() => ${tableVar(f.targetModel)}.id, { onDelete: 'restrict' })`;
+      // Q6: RESTRICT — refuse a hard-delete that would orphan referencing rows. sqlite-core has no
+      // `uuid` builder; not an issue since ids are always app-generated `uuidv7()` strings, never
+      // DB-generated (core/id.ts) — a `text` column round-trips them identically on both dialects.
+      expr =
+        dialect === 'postgres'
+          ? `uuid('${col}').references(() => ${tableVar(f.targetModel)}.id, { onDelete: 'restrict' })`
+          : `text('${col}').references(() => ${tableVar(f.targetModel)}.id, { onDelete: 'restrict' })`;
       break;
     case 'tree':
       // Self-referencing FK — `f.targetModel` is always this same model (see `TreeFieldDefinition`
@@ -53,14 +82,17 @@ function columnExpr(key: string, f: FieldDefinition): string {
       // callback, same as any other `reference` column. RESTRICT for the same reason as `reference`
       // above (Q6) — it only guards a real hard-delete, same caveat as `reference`, since the
       // generic router's normal DELETE is a soft delete that never touches this FK either way.
-      expr = `uuid('${col}').references(() => ${tableVar(f.targetModel)}.id, { onDelete: 'restrict' })`;
+      expr =
+        dialect === 'postgres'
+          ? `uuid('${col}').references(() => ${tableVar(f.targetModel)}.id, { onDelete: 'restrict' })`
+          : `text('${col}').references(() => ${tableVar(f.targetModel)}.id, { onDelete: 'restrict' })`;
       break;
     case 'modelRef':
     case 'actionRef':
     case 'fieldRef':
       // like 'enum': no length cap — real value enforcement is a per-request registry check,
       // not something the schema can express (see core/validation.ts).
-      expr = `varchar('${col}')`;
+      expr = dialect === 'postgres' ? `varchar('${col}')` : `text('${col}')`;
       break;
     case 'manyToMany':
       // never reaches here — `emitTable` filters manyToMany fields out of `model.fields` before
@@ -88,7 +120,9 @@ function extraConfigLines(model: ModelDefinition): string[] {
     }
     if (f.unique) {
       // §4: partial unique index, not a plain UNIQUE — a soft-deleted row must not permanently
-      // block reuse of its unique value.
+      // block reuse of its unique value. sqlite-core's uniqueIndex().where() supports the same
+      // partial-index syntax (SQLite has native partial index support), so this needs no dialect
+      // branch.
       lines.push(
         `  uniqueIndex('${model.name}_${col}_unique_idx').on(table.${key}).where(sql` +
           '`' +
@@ -115,24 +149,31 @@ function extraConfigLines(model: ModelDefinition): string[] {
   return lines;
 }
 
-function emitTable(model: ModelDefinition, extraLines: string[] = []): string {
+function emitTable(model: ModelDefinition, dialect: Dialect, extraLines: string[] = []): string {
   const varName = tableVar(model.name);
+  const idCol = dialect === 'postgres' ? `uuid('id').primaryKey()` : `text('id').primaryKey()`;
+  const tsCol = (name: string) =>
+    dialect === 'postgres' ? `timestamp('${name}', { withTimezone: true })` : `text('${name}', { mode: 'string' })`;
+  const createdByCol =
+    dialect === 'postgres'
+      ? `uuid('created_by_id').references(() => ${tableVar('users')}.id, { onDelete: 'restrict' })`
+      : `text('created_by_id').references(() => ${tableVar('users')}.id, { onDelete: 'restrict' })`;
   const columnLines = [
-    `  id: uuid('id').primaryKey(),`,
-    `  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),`,
-    `  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),`,
-    `  deletedAt: timestamp('deleted_at', { withTimezone: true }),`,
+    `  id: ${idCol},`,
+    `  createdAt: ${tsCol('created_at')}.notNull(),`,
+    `  updatedAt: ${tsCol('updated_at')}.notNull(),`,
+    `  deletedAt: ${tsCol('deleted_at')},`,
     // Q30: audit trail, not ownership — nullable (self-registration and other unauthenticated
     // creates have no actor to stamp) and RESTRICT like every other reference() column, but never
     // declarable via field.* and never touched by requireOwnsRow/updateRow.
-    `  createdById: uuid('created_by_id').references(() => ${tableVar('users')}.id, { onDelete: 'restrict' }),`,
+    `  createdById: ${createdByCol},`,
     // manyToMany has no column of its own — it's backed by a separate junction table instead
     // (see emitJunctionTable), so it's excluded here rather than passed to columnExpr. referenceToMany
     // is excluded for the same reason: its FK column lives on the *target* model (injected by
     // `injectInverseReferenceFields` into `generateSchemaSource`'s augmented models), not here.
     ...Object.entries(model.fields)
       .filter(([, f]) => f.kind !== 'manyToMany' && f.kind !== 'referenceToMany')
-      .map(([key, f]) => `  ${key}: ${columnExpr(key, f)},`),
+      .map(([key, f]) => `  ${key}: ${columnExpr(key, f, dialect)},`),
   ];
   // Auto-indexed unconditionally: `id`, `createdAt`, `updatedAt`, `createdById` are treated as
   // implicitly sortable/filterable by the router (src/router/fields.ts) since a model author has
@@ -147,7 +188,8 @@ function emitTable(model: ModelDefinition, extraLines: string[] = []): string {
     ...extraLines,
   ];
 
-  let src = `export const ${varName} = pgTable('${model.tableName}', {\n${columnLines.join('\n')}\n}`;
+  const tableFn = dialect === 'postgres' ? 'pgTable' : 'sqliteTable';
+  let src = `export const ${varName} = ${tableFn}('${model.tableName}', {\n${columnLines.join('\n')}\n}`;
   if (extra.length > 0) {
     src += `, (table) => [\n${extra.join('\n')}\n]`;
   }
@@ -160,7 +202,7 @@ function emitTable(model: ModelDefinition, extraLines: string[] = []): string {
  * express: a *compound* partial-unique index over both FK columns together, so the same pair can't
  * be attached twice while still allowing a re-attach after a prior soft-remove (same "partial
  * index, not plain UNIQUE" reasoning as `extraConfigLines`' per-field unique case above). */
-function emitJunctionTable(relation: ManyToManyRelation): string {
+function emitJunctionTable(relation: ManyToManyRelation, dialect: Dialect): string {
   const junctionModel = buildJunctionModel(relation);
   const cols = junctionColumnsOf(relation);
   const compoundUniqueLine =
@@ -169,7 +211,7 @@ function emitJunctionTable(relation: ManyToManyRelation): string {
     '${table.deletedAt} IS NULL' +
     '`' +
     `),`;
-  return emitTable(junctionModel, [compoundUniqueLine]);
+  return emitTable(junctionModel, dialect, [compoundUniqueLine]);
 }
 
 /** One shared, fixed-shape table backing every Domain's Domain Settings (ADR 0002) — a single
@@ -179,42 +221,62 @@ function emitJunctionTable(relation: ManyToManyRelation): string {
  * always exist regardless of whether a consuming app declares any Domain Settings of its own —
  * this keeps the table's own shape stable across `ratchet generate` runs even as domains are
  * added, renamed, or have fields added to their settings. */
-function emitDomainSettingsTable(): string {
+function emitDomainSettingsTable(dialect: Dialect): string {
+  const tableFn = dialect === 'postgres' ? 'pgTable' : 'sqliteTable';
+  const domainCol = dialect === 'postgres' ? `varchar('domain').primaryKey()` : `text('domain').primaryKey()`;
+  const valuesCol = dialect === 'postgres' ? `jsonb('values').notNull().default({})` : `text('values', { mode: 'json' }).notNull().default({})`;
+  const updatedAtCol =
+    dialect === 'postgres' ? `timestamp('updated_at', { withTimezone: true }).notNull()` : `text('updated_at', { mode: 'string' }).notNull()`;
   return [
-    `export const ratchetDomainSettingsTable = pgTable('ratchet_domain_settings', {`,
-    `  domain: varchar('domain').primaryKey(),`,
-    `  values: jsonb('values').notNull().default({}),`,
-    `  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),`,
+    `export const ratchetDomainSettingsTable = ${tableFn}('ratchet_domain_settings', {`,
+    `  domain: ${domainCol},`,
+    `  values: ${valuesCol},`,
+    `  updatedAt: ${updatedAtCol},`,
     `});\n`,
   ].join('\n');
 }
 
-export function generateSchemaSource(scanned: ScannedModel[]): string {
-  const imports = [
-    `import {`,
-    `  pgTable,`,
-    `  varchar,`,
-    `  text,`,
-    `  integer,`,
-    `  numeric,`,
-    `  boolean,`,
-    `  timestamp,`,
-    `  jsonb,`,
-    `  uuid,`,
-    `  index,`,
-    `  uniqueIndex,`,
-    `  check,`,
-    `} from 'drizzle-orm/pg-core';`,
-    `import { sql } from 'drizzle-orm';`,
-    ``,
-  ].join('\n');
+export function generateSchemaSource(scanned: ScannedModel[], dialect: Dialect): string {
+  const imports =
+    dialect === 'postgres'
+      ? [
+          `import {`,
+          `  pgTable,`,
+          `  varchar,`,
+          `  text,`,
+          `  integer,`,
+          `  numeric,`,
+          `  boolean,`,
+          `  timestamp,`,
+          `  jsonb,`,
+          `  uuid,`,
+          `  index,`,
+          `  uniqueIndex,`,
+          `  check,`,
+          `} from 'drizzle-orm/pg-core';`,
+          `import { sql } from 'drizzle-orm';`,
+          ``,
+        ].join('\n')
+      : [
+          `import {`,
+          `  sqliteTable,`,
+          `  text,`,
+          `  integer,`,
+          `  numeric,`,
+          `  index,`,
+          `  uniqueIndex,`,
+          `  check,`,
+          `} from 'drizzle-orm/sqlite-core';`,
+          `import { sql } from 'drizzle-orm';`,
+          ``,
+        ].join('\n');
 
   // Augment every model with the inverse `reference` field each `referenceToMany` declaration
   // implies on its target (e.g. `Article.comments -> Comment.articleId`), so `emitTable` emits the
   // FK column + index on the target table. The originals are untouched; these clones are codegen-only.
   const augmentedModels = injectInverseReferenceFields(scanned.map((s) => s.model));
 
-  const tables = augmentedModels.map((model) => emitTable(model)).join('\n');
+  const tables = augmentedModels.map((model) => emitTable(model, dialect)).join('\n');
 
   // Every manyToMany field declared across every scanned model gets its own junction table — only
   // the declaring (source) side is scanned here, since the field key already namespaces the table
@@ -222,8 +284,8 @@ export function generateSchemaSource(scanned: ScannedModel[]): string {
   // relation to emit from, even though the relation is queryable from both sides at request time.
   const junctionTables = scanned
     .flatMap(({ model }) => manyToManyFieldsOf(model))
-    .map((relation) => emitJunctionTable(relation))
+    .map((relation) => emitJunctionTable(relation, dialect))
     .join('\n');
 
-  return HEADER + imports + '\n' + tables + '\n' + junctionTables + '\n' + emitDomainSettingsTable();
+  return HEADER + imports + '\n' + tables + '\n' + junctionTables + '\n' + emitDomainSettingsTable(dialect);
 }

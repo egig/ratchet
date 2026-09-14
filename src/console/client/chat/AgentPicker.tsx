@@ -10,6 +10,7 @@ export interface AgentOption {
   name: string;
   description: string | null;
   active: boolean;
+  providerId: string | null;
 }
 
 /** React Query hook for the agents list — shared by `AgentPicker`, `NewChatBar`, and the chat

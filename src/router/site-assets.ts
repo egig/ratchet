@@ -1,5 +1,5 @@
 import { App } from './http-app.js';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import type { FileStorage } from '@flystorage/file-storage';
 import type { DomainDefinition } from '../core/domain.js';
 import { PipelineError } from '../core/pipeline.js';
@@ -8,7 +8,6 @@ import { streamStoredFile } from '../core/file-serving.js';
 import type { StoredFile } from '../core/storage.js';
 import { toErrorResponse } from './errors.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 /**
  * Serves a `field.file({ public: true })` Domain Settings value with no auth at all — the read

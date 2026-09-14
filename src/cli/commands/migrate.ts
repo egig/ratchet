@@ -8,7 +8,7 @@ export async function runMigrate(cwd: string): Promise<void> {
   const { generatedDir, migrationsDir } = resolveDirs(cwd, config);
 
   await mkdir(migrationsDir, { recursive: true });
-  const drizzleConfigFile = await writeDrizzleKitConfig(cwd, generatedDir, migrationsDir);
+  const drizzleConfigFile = await writeDrizzleKitConfig(cwd, generatedDir, migrationsDir, config.db);
 
   // §7: apply + track the SQL files already emitted by `ratchet generate` — never diff or
   // `push` here.

@@ -1,5 +1,5 @@
 import { App, type Ctx } from '../router/http-app.js';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type { AnyDb } from '../core/db.js';
 import type { FileStorage } from '@flystorage/file-storage';
 import type { ModelDefinition } from '../core/model.js';
 import type { DomainDefinition } from '../core/domain.js';
@@ -15,7 +15,6 @@ import { readJsonBody } from '../router/create-router.js';
 import { serializeModelMeta } from './serialize-model.js';
 import { serializeDomainSettingsMeta } from './serialize-domain.js';
 
-type AnyDb = PgDatabase<any, any, any>;
 
 /** Checks `def.settingFields` for a `kind: 'file'` entry — the Domain Settings counterpart of
  * `router/create-router.ts`'s `resolveFileField`, just without that one's extra fallback into a

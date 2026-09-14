@@ -38,7 +38,7 @@ Watches `models/**/*.model.ts`. On every change: regenerates, runs `drizzle-kit 
 Boots the API server: reads `ratchet.config.ts` and the generated registry, and starts a listening server with the console (`/console` by default — see `consolePath`), `/api/auth/*`, and `/api/:model` mounted. No server entry file needed.
 
 ```sh
-PORT=3000 DATABASE_URL=postgres://... ratchet serve
+PORT=3000 ratchet serve   # DATABASE_URL unset -> the local SQLite file
 ```
 
 ## `ratchet build`
@@ -47,4 +47,15 @@ Builds the console client (Bun's bundler + Tailwind, hashed assets + manifest) a
 
 ## `ratchet studio`
 
-Proxies to `drizzle-kit studio`, for browsing/editing your Postgres database directly.
+Proxies to `drizzle-kit studio`, for browsing/editing your database directly (SQLite or Postgres — see [Database](/docs/database)).
+
+## `ratchet create-admin`
+
+Creates the root admin user directly against the database, bypassing HTTP entirely. Prompts interactively for an email and password, or accepts `--email`/`--password` for scripted/CI use. Refuses if a root admin already exists.
+
+This is production's bootstrap path: `/api/auth/setup` (and the console's `/setup` screen) 404 unconditionally when `env` resolves to `'production'` (see `FrameworkConfig.env`), so they never reveal whether a root admin exists. In development, `/setup` still works as a normal web flow.
+
+```sh
+ratchet create-admin
+ratchet create-admin --email admin@example.com --password 'correct horse battery staple'
+```

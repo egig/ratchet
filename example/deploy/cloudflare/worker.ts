@@ -39,6 +39,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { FileStorage, FileWasNotFound, type StatEntry, type StorageAdapter } from '@flystorage/file-storage';
 import { createRatchetApp } from '@egig/ratchet/server';
+import { wrapDb } from '@egig/ratchet/core';
 import type { ConsoleAsset, ConsoleAssetSource, ConsoleManifest } from '@egig/ratchet/console';
 import { bundle } from '../../.ratchet/app.js';
 
@@ -163,7 +164,7 @@ export default {
     // pattern here, not a mistake. `fetch_types: false` skips a pg_catalog round-trip ratchet's
     // generated schema doesn't need (no array-typed columns).
     const client = postgres(env.HYPERDRIVE.connectionString, { max: 5, fetch_types: false });
-    const db = drizzle(client);
+    const db = wrapDb(drizzle(client), 'postgres');
 
     // `createRatchetApp` owns the mount sequence (`/api/auth` → `/api/automation` → `/api` →
     // `/_site-assets` → console). Rebuilding it per request is cheap — no I/O, just route-table

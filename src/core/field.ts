@@ -327,7 +327,7 @@ export const field = {
 
   /** Tags an existing field definition with a `name` the console client can key a custom form
    * editor off of (see `console/client/field-renderers.tsx`), without introducing a new storage
-   * kind — `base`'s Postgres column and Zod validation apply unchanged, e.g.
+   * kind — `base`'s DB column and Zod validation apply unchanged, e.g.
    * `field.custom('html', field.text())` stores and validates exactly like `field.text()`, it
    * just renders differently in the console. */
   custom<F extends FieldDefinition>(name: string, base: F, opts: { hideInTable?: boolean } = {}): F {

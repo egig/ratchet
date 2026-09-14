@@ -31,9 +31,13 @@ import { drizzle } from 'drizzle-orm/neon-http';
 import { neon } from '@neondatabase/serverless';
 import { createRatchetApp } from '@egig/ratchet/server';
 import { buildStorageAdapter } from '@egig/ratchet/storage';
+import { wrapDb } from '@egig/ratchet/core';
 import { bundle } from '../../../.ratchet/app.js';
 
-const db = drizzle(neon(process.env.DATABASE_URL!));
+// `wrapDb` adapts the raw drizzle instance to the `AnyDb` handle `createRatchetApp` expects
+// (normalizes pg-core's raw-query surface across dialects — see `docs/adr/0004-...`); Neon is
+// Postgres-compatible, so `'postgres'` is the right dialect here even though this isn't postgres.js.
+const db = wrapDb(drizzle(neon(process.env.DATABASE_URL!)), 'postgres');
 
 const storage = await buildStorageAdapter(
   {

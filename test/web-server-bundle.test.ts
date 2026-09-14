@@ -59,7 +59,7 @@ describe('buildServerBundle', () => {
     const { cwd, dirs } = await makeFixture(false);
     cleanup.push(cwd);
 
-    await buildServerBundle(cwd, dirs);
+    await buildServerBundle(cwd, dirs, { connectionString: 'postgres://test' });
 
     const entrySrc = await readFile(path.join(dirs.generatedDir, 'server-entry.ts'), 'utf8');
     expect(entrySrc).toContain("import { createRatchetApp } from '@egig/ratchet/server';");
@@ -74,7 +74,7 @@ describe('buildServerBundle', () => {
     const { cwd, dirs } = await makeFixture(true);
     cleanup.push(cwd);
 
-    await buildServerBundle(cwd, dirs);
+    await buildServerBundle(cwd, dirs, { connectionString: 'postgres://test' });
 
     const entrySrc = await readFile(path.join(dirs.generatedDir, 'server-entry.ts'), 'utf8');
     expect(entrySrc).toContain('web: { entrySrc: "/_ratchet/entry.client.js", publicDir: "public", generatedDir: ".ratchet" }');

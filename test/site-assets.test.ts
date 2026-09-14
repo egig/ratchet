@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
-import type { PgDatabase } from 'drizzle-orm/pg-core';
+import type postgres from 'postgres';
+import type { AnyDb } from '../src/core/db.js';
+import { connectTestDb } from './helpers/db.js';
 import { sql } from 'drizzle-orm';
 import { FileStorage } from '@flystorage/file-storage';
 import { InMemoryStorageAdapter } from '@flystorage/in-memory';
@@ -35,14 +35,13 @@ function upload(app: ReturnType<typeof createConsoleRouter>, field_: string, tok
 
 describeIfDb('Domain Settings public file fields (against a live Postgres)', () => {
   let client: postgres.Sql;
-  let db: PgDatabase<any, any, any>;
+  let db: AnyDb;
   let storage: FileStorage;
   let consoleApp: ReturnType<typeof createConsoleRouter>;
   let siteAssetsApp: ReturnType<typeof createSiteAssetsRouter>;
 
   beforeAll(async () => {
-    client = postgres(connectionString!);
-    db = drizzle(client) as unknown as PgDatabase<any, any, any>;
+    ({ db, client } = connectTestDb(connectionString!));
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS ratchet_domain_settings (
