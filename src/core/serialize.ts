@@ -31,6 +31,25 @@ export function normalizeTimestamps(model: ModelDefinition, row: Record<string, 
   return out;
 }
 
+/**
+ * Raw `db.execute(sql...)` rows return `json`/`file` columns as whatever the driver's native
+ * value is: postgres-js already deserializes `jsonb` into objects at the protocol level, but
+ * sqlite's `text(mode: 'json')` round-trip is a Drizzle query-builder feature this bypassed path
+ * doesn't get — `toDriverValue` (persistence.ts) has to `JSON.stringify` these columns by hand on
+ * the way in for the same reason, so sqlite hands them back as JSON-encoded strings on the way
+ * out. Parse only when still a string so both dialects end up with the same parsed shape; must
+ * run before `deriveFileFields`, which expects an already-parsed object.
+ */
+export function normalizeJsonFields(model: ModelDefinition, row: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...row };
+  for (const [key, f] of Object.entries(model.fields)) {
+    if ((f.kind === 'json' || f.kind === 'file') && typeof out[key] === 'string') {
+      out[key] = JSON.parse(out[key] as string);
+    }
+  }
+  return out;
+}
+
 /** Strips every `field.*({ sensitive: true })` column (e.g. a password hash) from a row before
  * it can reach an HTTP response — applied at every router response boundary, never in persistence. */
 export function redactSensitiveFields(model: ModelDefinition, row: Record<string, unknown>): Record<string, unknown> {

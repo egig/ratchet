@@ -11,7 +11,7 @@ import {
 import { inverseColumnName, referenceToManyFieldsOf, type ReferenceToManyRelation } from '../core/reference-to-many.js';
 import { PipelineError } from '../core/pipeline.js';
 import { rowToCamelCase, toSnakeCase } from '../core/naming.js';
-import { deriveFileFields, normalizeTimestamps, redactSensitiveFields } from '../core/serialize.js';
+import { deriveFileFields, normalizeJsonFields, normalizeTimestamps, redactSensitiveFields } from '../core/serialize.js';
 import { allColumnKeys } from './columns.js';
 import { encodeCursor, type FilterClause, type FilterNode, type ParsedListQuery } from './query.js';
 
@@ -129,7 +129,7 @@ async function attachManyToManyIncludes(
             WHERE id IN (${sql.join(foreignIds.map((id) => sql`${id}`), sql`, `)}) AND deleted_at IS NULL`,
       );
       for (const raw of targetRows) {
-        const cleaned = deriveFileFields(targetModel, redactSensitiveFields(targetModel, normalizeTimestamps(targetModel, raw)));
+        const cleaned = deriveFileFields(targetModel, redactSensitiveFields(targetModel, normalizeTimestamps(targetModel, normalizeJsonFields(targetModel, raw))));
         targetById.set(cleaned.id as string, cleaned);
       }
     }
@@ -198,7 +198,7 @@ async function attachReferenceToManyIncludes(
 
     const byParentId = new Map<string, Record<string, unknown>[]>();
     for (const raw of childRows) {
-      const cleaned = deriveFileFields(targetModel, redactSensitiveFields(targetModel, normalizeTimestamps(targetModel, rowToCamelCase(raw))));
+      const cleaned = deriveFileFields(targetModel, redactSensitiveFields(targetModel, normalizeTimestamps(targetModel, normalizeJsonFields(targetModel, rowToCamelCase(raw)))));
       const parentId = cleaned[inverseCol] as string | undefined;
       if (parentId === undefined) continue;
       if (!byParentId.has(parentId)) byParentId.set(parentId, []);
@@ -323,9 +323,9 @@ function nestRow(model: ModelDefinition, row: Record<string, unknown>, includes:
     out[plan.relationName] =
       relRow.id === null
         ? null
-        : deriveFileFields(plan.targetModel, redactSensitiveFields(plan.targetModel, normalizeTimestamps(plan.targetModel, relRow)));
+        : deriveFileFields(plan.targetModel, redactSensitiveFields(plan.targetModel, normalizeTimestamps(plan.targetModel, normalizeJsonFields(plan.targetModel, relRow))));
   }
-  return deriveFileFields(model, redactSensitiveFields(model, normalizeTimestamps(model, out)));
+  return deriveFileFields(model, redactSensitiveFields(model, normalizeTimestamps(model, normalizeJsonFields(model, out))));
 }
 
 export interface OffsetPage {

@@ -4,7 +4,7 @@ import type { FieldDefinition } from './field.js';
 import type { ModelDefinition } from './model.js';
 import { generateId } from './id.js';
 import { rowToCamelCase, toSnakeCase } from './naming.js';
-import { normalizeTimestamps } from './serialize.js';
+import { normalizeJsonFields, normalizeTimestamps } from './serialize.js';
 
 type Chunk = SQL | Name;
 
@@ -37,7 +37,7 @@ export async function fetchRow(
   const rows = await db.execute(
     sql`SELECT * FROM ${tableIdent(model)} WHERE ${sql.identifier('id')} = ${id}${deletedClause} LIMIT 1`,
   );
-  return rows[0] ? normalizeTimestamps(model, rowToCamelCase(rows[0])) : null;
+  return rows[0] ? normalizeTimestamps(model, normalizeJsonFields(model, rowToCamelCase(rows[0]))) : null;
 }
 
 /** Every row in `model` whose `fieldKey` column equals `value` (soft-deleted rows excluded) —
@@ -53,7 +53,7 @@ export async function listRowsByField(
   const rows = await db.execute(
     sql`SELECT * FROM ${tableIdent(model)} WHERE ${sql.identifier(toSnakeCase(fieldKey))} = ${value} AND ${sql.identifier('deleted_at')} IS NULL`,
   );
-  return rows.map((row) => normalizeTimestamps(model, rowToCamelCase(row)));
+  return rows.map((row) => normalizeTimestamps(model, normalizeJsonFields(model, rowToCamelCase(row))));
 }
 
 /** The ids of `targetModelName`'s rows whose `inverseCol` (e.g. `article_id`) equals `parentId`
@@ -122,7 +122,7 @@ export async function insertRow(
   );
   const row = rows[0];
   if (!row) throw new Error(`persist: insert into '${model.tableName}' returned no row`);
-  return normalizeTimestamps(model, rowToCamelCase(row));
+  return normalizeTimestamps(model, normalizeJsonFields(model, rowToCamelCase(row)));
 }
 
 export async function updateRow(
@@ -143,7 +143,7 @@ export async function updateRow(
   const rows = await db.execute(
     sql`UPDATE ${tableIdent(model)} SET ${sql.join(setParts, sql`, `)} WHERE ${sql.identifier('id')} = ${id} AND ${sql.identifier('deleted_at')} IS NULL RETURNING *`,
   );
-  return rows[0] ? normalizeTimestamps(model, rowToCamelCase(rows[0])) : null;
+  return rows[0] ? normalizeTimestamps(model, normalizeJsonFields(model, rowToCamelCase(rows[0]))) : null;
 }
 
 export async function softRemoveRow(
@@ -155,7 +155,7 @@ export async function softRemoveRow(
   const rows = await db.execute(
     sql`UPDATE ${tableIdent(model)} SET ${sql.identifier('deleted_at')} = ${now}, ${sql.identifier('updated_at')} = ${now} WHERE ${sql.identifier('id')} = ${id} AND ${sql.identifier('deleted_at')} IS NULL RETURNING *`,
   );
-  return rows[0] ? normalizeTimestamps(model, rowToCamelCase(rows[0])) : null;
+  return rows[0] ? normalizeTimestamps(model, normalizeJsonFields(model, rowToCamelCase(rows[0]))) : null;
 }
 
 export async function hardRemoveRow(db: AnyDb, model: ModelDefinition, id: string): Promise<void> {
