@@ -175,6 +175,20 @@ export async function action({ request, context }) {
 
 There is no first-run seeding — create your pages in the console (Pages).
 
+### Shop (scaffolded)
+
+`ratchet init` also scaffolds a small online store alongside the content-managed pages above:
+`models/shop/` (`Category`, `Product`, `Order`, `order_items` — see each model's own doc comment),
+`routes/categories.tsx` and `routes/shop.tsx` (a `?category=` filter) for browsing,
+`routes/products/$slug.tsx` for a single product, and `routes/cart.tsx` / `routes/checkout.tsx` /
+`routes/orders/$id.tsx` for a full guest checkout. The cart itself is a single cookie
+(`logic/cart.ts`) — no `Cart` model, no session — that only ever stores `{ productId, quantity }`
+pairs; every price and stock check is re-derived from the live `products` row, both when the cart
+renders and again inside `routes/checkout.tsx`'s transaction, so a tampered cookie can misstate what
+a visitor *wants* but never what they're actually charged. There's no payment processor wired up —
+an order is created `pending` for an admin to mark paid (`Order`'s `markPaid` console operation)
+once payment is collected out of band.
+
 ## Build & serve
 
 - `ratchet generate` scans `routesDir` and writes `.ratchet/app-routes.{server,client}.ts`.

@@ -40,7 +40,7 @@ export const meta = ({ data: d }: { data: Awaited<ReturnType<typeof loader>> }) 
 export default function ContentPage() {
   const { page } = useLoaderData<typeof loader>();
   return (
-    <article className="container prose">
+    <article className="page-section prose">
       <h1>{page.title}</h1>
       {/* page.body is sanitized server-side on every write (see models/website/page.model.ts). */}
       <div dangerouslySetInnerHTML={{ __html: page.body }} />
