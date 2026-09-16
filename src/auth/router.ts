@@ -53,7 +53,7 @@ function redactUser(user: UserRow): Record<string, unknown> {
 }
 
 async function userWithPermissions(db: AnyDb, user: UserRow): Promise<Record<string, unknown>> {
-  const permissions = typeof user.roleId === 'string' ? await listPermissionsForRole(db, user.roleId) : [];
+  const permissions = typeof user.roleId === 'string' ? await listPermissionsForRole(db, user.roleId) : {};
   return { ...redactUser(user), permissions };
 }
 

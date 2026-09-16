@@ -51,7 +51,7 @@ export type {
 export { defineDomain } from './domain.js';
 export type { DomainDefinition, DefineDomainConfig, ConsoleMenuItem } from './domain.js';
 
-export { pipe, validate, persist, requireOwnsRow, PipelineError } from './pipeline.js';
+export { pipe, validate, persist, forceOwnerOnCreate, assertOwnsRow, ownerFieldOf, PipelineError } from './pipeline.js';
 export type { OperationContext, Operation, PipelineFn, PipelineErrorOptions } from './pipeline.js';
 
 export { buildCreateSchema, buildUpdateSchema, buildDomainSettingsSchema, buildParamsSchema } from './validation.js';

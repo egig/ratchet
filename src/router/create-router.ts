@@ -4,7 +4,7 @@ import type { FileStorage } from '@flystorage/file-storage';
 import type { FileFieldDefinition } from '../core/field.js';
 import type { CustomOperationDefinition, ModelDefinition } from '../core/model.js';
 import type { OperationContext } from '../core/pipeline.js';
-import { PipelineError } from '../core/pipeline.js';
+import { PipelineError, forceOwnerOnCreate, assertOwnsRow as assertOwnsRowById, ownerFieldOf } from '../core/pipeline.js';
 import { generateId } from '../core/id.js';
 import { fetchRow } from '../core/persistence.js';
 import { deriveFileFields, redactSensitiveFields } from '../core/serialize.js';
@@ -24,8 +24,8 @@ import { parseInclude, parseListQuery } from './query.js';
 import { getOneRow, listRows } from './list.js';
 import { assertReadFieldsAllowed, filterIncludedRelations } from './read-access.js';
 
-type AccessResult = { user: UserRow | null };
-type FieldAccessResult = { user: UserRow | null; granted: GrantedFields };
+type AccessResult = { user: UserRow | null; scope: 'own' | 'any' | undefined };
+type FieldAccessResult = { user: UserRow | null; granted: GrantedFields; scope: 'own' | 'any' | undefined };
 
 /** `OperationContext.user` is a plain `Record<string, unknown>` (no index signature on `UserRow`
  * itself), so setting it from a resolved `UserRow` needs the same double-cast `requireAuth`
@@ -34,15 +34,24 @@ function toCtxUser(user: UserRow | null): Record<string, unknown> | null {
   return user as unknown as Record<string, unknown> | null;
 }
 
+/** Applies the "no explicit `scope` on a grant defaults to `'own'`" rule — every model has an
+ * owner (`core/pipeline.ts`'s `ownerFieldOf`), so this always resolves to a real scope. */
+function resolveScope(grantedScope: 'own' | 'any' | undefined): 'own' | 'any' {
+  return grantedScope ?? 'own';
+}
+
 /** Every route on the generic router requires a matching role grant by default — including
  * reads (the implicit `'read'` action, see `ratchet/auth`'s `Role.permissions`) — with
  * no way to opt individual models back in to their old always-open behavior except `api.public`
- * (`core/model.ts`). Skips auth entirely for a `public` model; otherwise defers to
- * `authorizeRequest`, which 401s (no/expired session) or 403s (session valid, permission missing). */
+ * (`core/model.ts`). Skips auth entirely for a `public` model (`scope` stays `undefined` — no
+ * session means no requester to scope "own" rows by); otherwise defers to `authorizeRequest`,
+ * which 401s (no/expired session) or 403s (session valid, permission missing), and also surfaces
+ * the matched grant's `scope` (`'own'` | `'any'`) — the caller combines it with
+ * `assertOwnsRowById` when appropriate. */
 async function resolveAccess(db: AnyDb, request: Request | undefined, model: ModelDefinition, action: string): Promise<AccessResult> {
-  if (model.api?.public) return { user: null };
-  const user = await authorizeRequest(db, request, model.name, action);
-  return { user };
+  if (model.api?.public) return { user: null, scope: undefined };
+  const { user, scope: grantedScope } = await authorizeRequest(db, request, model.name, action);
+  return { user, scope: resolveScope(grantedScope) };
 }
 
 /** `resolveAccess` plus the field-level grant for a field-shaped action (`read`/`create`/
@@ -55,10 +64,10 @@ async function resolveFieldAccess(
   model: ModelDefinition,
   action: string,
 ): Promise<FieldAccessResult> {
-  if (model.api?.public) return { user: null, granted: '*' };
-  const user = await authorizeRequest(db, request, model.name, action);
+  if (model.api?.public) return { user: null, granted: '*', scope: undefined };
+  const { user, scope: grantedScope } = await authorizeRequest(db, request, model.name, action);
   const granted = await resolveGrantedFields(db, user.roleId, model.name, action);
-  return { user, granted };
+  return { user, granted, scope: resolveScope(grantedScope) };
 }
 
 
@@ -72,10 +81,12 @@ function resolveModel(registry: Record<string, ModelDefinition>, name: string): 
 }
 
 /** `ApiModelOptions.ownerField` (core/model.ts) gate for a single already-fetched row — 404s
- * rather than 403ing on a mismatch, same "don't reveal existence" behavior as the write-side
- * `requireOwnsRow` (core/pipeline.ts) this pairs with. */
-function assertOwnsRow(model: ModelDefinition, row: Record<string, unknown>, userId: string): void {
-  if (model.api?.ownerField && row[model.api.ownerField] !== userId) {
+ * rather than 403ing on a mismatch, same "don't reveal existence" behavior as `core/pipeline.ts`'s
+ * fetch-based `assertOwnsRow` (imported here as `assertOwnsRowById`) this pairs with. Only called
+ * when the resolved `scope` for the request is `'own'` — a GET route already has the row in hand,
+ * so it checks it directly instead of fetching again. */
+function assertOwnsFetchedRow(model: ModelDefinition, row: Record<string, unknown>, userId: string): void {
+  if (row[ownerFieldOf(model)] !== userId) {
     throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
   }
 }
@@ -183,12 +194,11 @@ export function createApiRouter(registry: Record<string, ModelDefinition>, db: A
 
   app.get('/:model', async (c) => {
     const model = resolveModel(registry, c.req.param('model'));
-    const { user, granted } = await resolveFieldAccess(db, c.req.raw, model, 'read');
+    const { user, granted, scope } = await resolveFieldAccess(db, c.req.raw, model, 'read');
     const query = parseListQuery(model, new URL(c.req.url).searchParams, registry);
     assertReadFieldsAllowed(model, query, granted);
-    if (model.api?.ownerField) {
-      if (!user) throw new PipelineError({ code: 'INTERNAL', status: 500, message: `'${model.name}' combines api.ownerField with api.public — unsupported` });
-      query.filters.push({ field: model.api.ownerField, op: '=', value: user.id });
+    if (scope === 'own') {
+      query.filters.push({ field: ownerFieldOf(model), op: '=', value: user!.id });
     }
     const page = await listRows(db, model, registry, query);
     for (const row of page.rows) {
@@ -205,7 +215,7 @@ export function createApiRouter(registry: Record<string, ModelDefinition>, db: A
 
   app.get('/:model/:id', async (c) => {
     const model = resolveModel(registry, c.req.param('model'));
-    const { user, granted } = await resolveFieldAccess(db, c.req.raw, model, 'read');
+    const { user, granted, scope } = await resolveFieldAccess(db, c.req.raw, model, 'read');
     const searchParams = new URL(c.req.url).searchParams;
     const include = parseInclude(model, searchParams.get('include'), registry);
     const row = await getOneRow(db, model, registry, c.req.param('id'), {
@@ -213,10 +223,7 @@ export function createApiRouter(registry: Record<string, ModelDefinition>, db: A
       include,
     });
     if (!row) throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
-    if (model.api?.ownerField) {
-      if (!user) throw new PipelineError({ code: 'INTERNAL', status: 500, message: `'${model.name}' combines api.ownerField with api.public — unsupported` });
-      assertOwnsRow(model, row, user.id);
-    }
+    if (scope === 'own') assertOwnsFetchedRow(model, row, user!.id);
     await filterIncludedRelations(db, registry, model, row, include, user?.roleId);
     return c.json({ data: pickGrantedFields(model, row, granted) });
   });
@@ -232,16 +239,13 @@ export function createApiRouter(registry: Record<string, ModelDefinition>, db: A
   app.get('/:model/:id/:field', async (c) => {
     const model = resolveModel(registry, c.req.param('model'));
     resolveFileField(model, c.req.param('field'));
-    const { user, granted } = await resolveFieldAccess(db, c.req.raw, model, 'read');
+    const { user, granted, scope } = await resolveFieldAccess(db, c.req.raw, model, 'read');
     if (granted !== '*' && !granted.has(c.req.param('field'))) {
       throw new PipelineError({ code: 'FORBIDDEN', status: 403, message: `missing read permission for field '${c.req.param('field')}'` });
     }
     const row = await fetchRow(db, model, c.req.param('id'));
     if (!row) throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
-    if (model.api?.ownerField) {
-      if (!user) throw new PipelineError({ code: 'INTERNAL', status: 500, message: `'${model.name}' combines api.ownerField with api.public — unsupported` });
-      assertOwnsRow(model, row, user.id);
-    }
+    if (scope === 'own') assertOwnsFetchedRow(model, row, user!.id);
     const stored = storedFileOf(row, c.req.param('field'));
     if (!stored) throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
 
@@ -311,8 +315,13 @@ export function createApiRouter(registry: Record<string, ModelDefinition>, db: A
   app.post('/:model', async (c) => {
     const model = resolveModel(registry, c.req.param('model'));
     const { user, granted } = await resolveFieldAccess(db, c.req.raw, model, 'create');
-    const input = await readJsonBody(c);
-    assertWriteFieldsAllowed(model, input, granted);
+    const rawInput = await readJsonBody(c);
+    assertWriteFieldsAllowed(model, rawInput, granted);
+    // Force-set regardless of the resolved `scope` — there's no "create on someone else's
+    // behalf" capability (see `forceOwnerOnCreate`'s own doc comment). No user at all on a
+    // `public` model (no session to force an owner from) — `createdById` naturally stays null via
+    // `persistWrite`'s own fallback, same as any unauthenticated create today.
+    const input = user ? forceOwnerOnCreate(model, rawInput, user.id) : rawInput;
     const ctx: OperationContext = {
       operation: 'create',
       input,
@@ -329,9 +338,10 @@ export function createApiRouter(registry: Record<string, ModelDefinition>, db: A
 
   app.patch('/:model/:id', async (c) => {
     const model = resolveModel(registry, c.req.param('model'));
-    const { user, granted } = await resolveFieldAccess(db, c.req.raw, model, 'update');
+    const { user, granted, scope } = await resolveFieldAccess(db, c.req.raw, model, 'update');
     const input = await readJsonBody(c);
     assertWriteFieldsAllowed(model, input, granted);
+    if (scope === 'own') await assertOwnsRowById(db, model, c.req.param('id'), user!.id);
     const oldDoc = fileFieldsOf(model).length > 0 ? await fetchRow(db, model, c.req.param('id')) : null;
     const ctx: OperationContext = {
       operation: 'update',
@@ -375,7 +385,8 @@ export function createApiRouter(registry: Record<string, ModelDefinition>, db: A
     // — the operation's own field-level checks, for whatever it actually writes, are that
     // operation's own job (see `presetFields`, ratchet/auth): a generic `PipelineFn` here isn't
     // knowable up front the way a `PATCH` body already is.
-    const { user } = await resolveAccess(db, c.req.raw, model, operationName);
+    const { user, scope } = await resolveAccess(db, c.req.raw, model, operationName);
+    if (scope === 'own') await assertOwnsRowById(db, model, c.req.param('id'), user!.id);
 
     let input: Record<string, unknown> = {};
     if (def?.params) {
@@ -409,7 +420,8 @@ export function createApiRouter(registry: Record<string, ModelDefinition>, db: A
 
   app.delete('/:model/:id', async (c) => {
     const model = resolveModel(registry, c.req.param('model'));
-    const { user } = await resolveAccess(db, c.req.raw, model, 'remove');
+    const { user, scope } = await resolveAccess(db, c.req.raw, model, 'remove');
+    if (scope === 'own') await assertOwnsRowById(db, model, c.req.param('id'), user!.id);
     const ctx: OperationContext = {
       operation: 'remove',
       id: c.req.param('id'),

@@ -1,4 +1,5 @@
 import type { ModelDefinition, OperationVisibilityRule } from '../core/model.js';
+import { ownerFieldOf } from '../core/pipeline.js';
 
 export interface ConsoleFieldMeta {
   key: string;
@@ -77,6 +78,11 @@ export interface ConsoleModelMeta {
   /** this model's Domain (see CONTEXT.md), when it has one — the console sidebar
    * (`console/client/Layout.tsx`) groups models sharing a `domain` under one labeled section. */
   domain?: string;
+  /** the column that counts as a row's owner for this model (`core/pipeline.ts`'s `ownerFieldOf`)
+   * — `ApiModelOptions.ownerField` when set, else the default `'createdById'`. Every model has
+   * one; `role.form.tsx`'s permission tree uses it to label the own/any scope control it renders
+   * for every resource+action node. */
+  ownerField: string;
 }
 
 const BUILTIN_OPERATION_NAMES: ReadonlySet<string> = new Set(['create', 'update', 'remove']);
@@ -163,6 +169,7 @@ export function serializeModelMeta(model: ModelDefinition): ConsoleModelMeta {
     operations: Object.keys(model.operations)
       .filter((name) => !BUILTIN_OPERATION_NAMES.has(name))
       .map((name) => serializeOperation(model, name)),
+    ownerField: ownerFieldOf(model),
   };
   if (model.console?.domain) meta.domain = model.console.domain;
   return meta;

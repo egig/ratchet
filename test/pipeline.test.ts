@@ -9,7 +9,8 @@ import {
   pipe,
   validate,
   persist,
-  requireOwnsRow,
+  forceOwnerOnCreate,
+  assertOwnsRow,
   PipelineError,
   type PipelineFn,
   type OperationContext,
@@ -170,8 +171,18 @@ describeIfDb('pipeline primitives (against a live Postgres)', () => {
     });
   });
 
-  describe('requireOwnsRow (pairs with ApiModelOptions.ownerField, core/model.ts)', () => {
+  describe('forceOwnerOnCreate / assertOwnsRow (pair with ApiModelOptions.ownerField, core/model.ts)', () => {
+    // Ownership is now enforced by each entry point (create-router.ts, automation/tool.ts)
+    // calling these two plain functions directly, once it resolves the caller's `scope` — not by
+    // a pipeline step a model author composes by hand (the old `requireOwnsRow`).
     const OwnedWidget = defineModel('owned_widgets', {
+      fields: {
+        userId: field.string({ required: true }),
+        name: field.string({ required: true }),
+      },
+      api: { ownerField: 'userId' },
+    });
+    const UnownedWidget = defineModel('owned_widgets', {
       fields: {
         userId: field.string({ required: true }),
         name: field.string({ required: true }),
@@ -200,49 +211,57 @@ describeIfDb('pipeline primitives (against a live Postgres)', () => {
       await db.execute(sql`DROP TABLE IF EXISTS owned_widgets`);
     });
 
-    function ctxAs(userId: string, overrides: Partial<OperationContext>): OperationContext {
-      return {
-        operation: 'create',
-        input: {},
-        doc: null,
-        model: OwnedWidget,
-        db,
-        user: { id: userId },
-        ...overrides,
-      };
+    function ctx(overrides: Partial<OperationContext>): OperationContext {
+      return { operation: 'create', input: {}, doc: null, model: OwnedWidget, db, ...overrides };
     }
 
-    it("create: overwrites input[ownerField] with the requesting user's id, ignoring a spoofed value", async () => {
-      const run = pipe(requireOwnsRow('userId'), validate, persist);
-      const result = await run(ctxAs('user-a', { input: { name: 'x', userId: 'someone-else' } }));
-      expect(result.doc?.userId).toBe('user-a');
+    it("forceOwnerOnCreate overwrites input[ownerField] with the given user id, ignoring a spoofed value", () => {
+      const input = forceOwnerOnCreate(OwnedWidget, { name: 'x', userId: 'someone-else' }, 'user-a');
+      expect(input.userId).toBe('user-a');
     });
 
-    it('update: 404s when the prefetched doc belongs to a different user', async () => {
-      const created = await pipe(validate, persist)(ctxAs('user-a', { input: { name: 'x', userId: 'user-a' } }));
-      const id = created.doc!.id as string;
+    it("forceOwnerOnCreate is a no-op for the default createdById case (persistWrite already force-sets it, never reading it from input)", () => {
+      const input = forceOwnerOnCreate(UnownedWidget, { name: 'x' }, 'user-a');
+      expect(input).toEqual({ name: 'x' });
+    });
 
-      const run = pipe(requireOwnsRow('userId'), validate, persist);
-      await expect(run(ctxAs('user-b', { operation: 'update', id, input: { name: 'y' } }))).rejects.toMatchObject({
+    it('assertOwnsRow 404s when the row belongs to a different user', async () => {
+      const created = await pipe(validate, persist)(ctx({ input: { name: 'x', userId: 'user-a' } }));
+      const id = created.doc!.id as string;
+      await expect(assertOwnsRow(db, OwnedWidget, id, 'user-b')).rejects.toMatchObject({
         code: 'NOT_FOUND',
         status: 404,
       });
     });
 
-    it('update: succeeds when the prefetched doc belongs to the requesting user', async () => {
-      const created = await pipe(validate, persist)(ctxAs('user-a', { input: { name: 'x', userId: 'user-a' } }));
+    it('assertOwnsRow resolves when the row belongs to the given user', async () => {
+      const created = await pipe(validate, persist)(ctx({ input: { name: 'x', userId: 'user-a' } }));
       const id = created.doc!.id as string;
-
-      const run = pipe(requireOwnsRow('userId'), validate, persist);
-      const result = await run(ctxAs('user-a', { operation: 'update', id, input: { name: 'y' } }));
-      expect(result.doc?.name).toBe('y');
+      await expect(assertOwnsRow(db, OwnedWidget, id, 'user-a')).resolves.toBeUndefined();
     });
 
-    it('throws INTERNAL when composed before requireAuth (ctx.user undefined)', async () => {
-      const run = pipe(requireOwnsRow('userId'), validate, persist);
-      await expect(
-        run({ operation: 'create', input: { name: 'x' }, doc: null, model: OwnedWidget, db }),
-      ).rejects.toMatchObject({ code: 'INTERNAL', status: 500 });
+    it('assertOwnsRow 404s on a non-existent id', async () => {
+      await expect(assertOwnsRow(db, OwnedWidget, '00000000-0000-7000-8000-000000000000', 'user-a')).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+        status: 404,
+      });
+    });
+
+    it('assertOwnsRow falls back to createdById when the model has no explicit ownerField', async () => {
+      const created = await pipe(validate, persist)({
+        operation: 'create',
+        input: { name: 'x', userId: 'irrelevant' },
+        doc: null,
+        model: UnownedWidget,
+        db,
+        user: { id: 'user-a' },
+      });
+      const id = created.doc!.id as string;
+      await expect(assertOwnsRow(db, UnownedWidget, id, 'user-a')).resolves.toBeUndefined();
+      await expect(assertOwnsRow(db, UnownedWidget, id, 'user-b')).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+        status: 404,
+      });
     });
   });
 });

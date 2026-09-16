@@ -40,7 +40,7 @@ export interface OperationContext {
    * `requirePermission`/business logic — absent until an auth pipeline step sets it. */
   user?: Record<string, unknown> | null;
   /** name -> ModelDefinition lookup for the whole app, set by the router that builds this ctx
-   * (src/router/create-router.ts). Read by `requireValidPermissions`/`validatePermissionTarget`
+   * (src/router/create-router.ts). Read by `requireValidPermissions`/`validateRolePermissions`
    * (ratchet/auth) to check a permission target's `resource`/`action` against what actually
    * exists. Optional because call sites outside the generic `/api/:model` router (e.g.
    * `/api/auth/register`) don't need it. */
@@ -120,26 +120,39 @@ export function pipe(...fns: PipelineFn[]): PipelineFn {
   };
 }
 
-/** Pairs with `ApiModelOptions.ownerField` (core/model.ts): on `create`, overwrites
- * `ctx.input[ownerField]` with the requesting user's id (ignoring any client-supplied value) so a
- * row is always created under the real requester; on `update`/`remove`, checks the already-
- * prefetched `ctx.doc[ownerField]` against that same id and 404s on mismatch — same "don't reveal
- * existence" behavior as `automation/pipeline.ts`'s `assertOwnsChat`. Must run after `requireAuth`
- * (needs `ctx.user`) and, for `create`, before `validate` (so the schema sees the real owner id). */
-export function requireOwnsRow(ownerField: string): PipelineFn {
-  return async (ctx) => {
-    if (ctx.user === undefined) {
-      throw new PipelineError({ code: 'INTERNAL', status: 500, message: 'requireOwnsRow run before requireAuth' });
-    }
-    const userId = (ctx.user as { id?: string } | null)?.id;
-    if (ctx.operation === 'create') {
-      return { ...ctx, input: { ...ctx.input, [ownerField]: userId } };
-    }
-    if (ctx.doc?.[ownerField] !== userId) {
-      throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
-    }
-    return ctx;
-  };
+/** Every model has an owner: `ApiModelOptions.ownerField` (core/model.ts) names an explicit
+ * override for a model whose real owner differs from whoever created the row (e.g. `Workspace`'s
+ * `userId` — a self-registered user's default workspace is provisioned with no `ctx.user` at all,
+ * so `createdById` would be null there); every other model falls back to the auto-injected
+ * `createdById` system column, which `persistWrite` already force-sets from the requester's id on
+ * every insert, for every model, unconditionally. So `scope: 'own' | 'any'` (`Role.permissions`,
+ * ratchet/auth) is meaningful everywhere, not just on models that opt in. */
+export function ownerFieldOf(model: ModelDefinition): string {
+  return model.api?.ownerField ?? 'createdById';
+}
+
+/** For `create`: forces `input[ownerField]` to `userId`, ignoring any client-supplied value — a
+ * row is always created under the real requester, regardless of the caller's granted `scope`
+ * (there is no "create on someone else's behalf" capability). A no-op for the default
+ * `createdById` case: `persistWrite` already force-sets it as a separate `insertRow` argument,
+ * never read from `input` at all, so there's nothing here to override. */
+export function forceOwnerOnCreate(model: ModelDefinition, input: Record<string, unknown>, userId: string): Record<string, unknown> {
+  const ownerField = ownerFieldOf(model);
+  if (ownerField === 'createdById') return input;
+  return { ...input, [ownerField]: userId };
+}
+
+/** For `update`/`remove`/a custom operation, when the resolved `scope` for that action is
+ * `'own'`: fetches the row and 404s (not 403 — "don't reveal existence", same as
+ * `automation/pipeline.ts`'s `assertOwnsChat`) unless it belongs to `userId`. Callers that already
+ * have the row in hand (a `GET` route) should check `row[ownerFieldOf(model)] !== userId` directly
+ * instead of fetching again. */
+export async function assertOwnsRow(db: AnyDb, model: ModelDefinition, id: string, userId: string): Promise<void> {
+  const ownerField = ownerFieldOf(model);
+  const row = await fetchRow(db, model, id);
+  if (!row || row[ownerField] !== userId) {
+    throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
+  }
 }
 
 export const validate: PipelineFn = async (ctx) => {
@@ -293,6 +306,7 @@ const persistWrite: PipelineFn = async (ctx) => {
     const doc = await insertRow(ctx.db, ctx.model, ctx.input, createdById);
     await syncManyToManyFields(ctx.db, ctx.model, ctx.input, doc.id as string, createdById);
     await syncReferenceToManyFields(ctx.db, ctx.model, ctx.input, doc.id as string);
+    await ctx.db.onMutation?.({ model: ctx.model, before: null, after: doc, event: 'create', userId: createdById ?? undefined });
     return { ...ctx, doc };
   }
   if (!ctx.id) throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
@@ -301,6 +315,7 @@ const persistWrite: PipelineFn = async (ctx) => {
   if (!doc) throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
   await syncManyToManyFields(ctx.db, ctx.model, ctx.input, ctx.id, createdById);
   await syncReferenceToManyFields(ctx.db, ctx.model, ctx.input, ctx.id);
+  await ctx.db.onMutation?.({ model: ctx.model, before: ctx.doc, after: doc, event: 'update', userId: createdById ?? undefined });
   return { ...ctx, doc };
 };
 
@@ -327,6 +342,7 @@ const persistRemove: PipelineFn = async (ctx) => {
   }
   // a soft-deleted parent should not keep owning children — detach them so they're reassignable.
   await detachReferenceToManyChildren(ctx.db, ctx.model, ctx.id);
+  await ctx.db.onMutation?.({ model: ctx.model, before: ctx.doc, after: null, event: 'remove', userId: typeof ctx.user?.id === 'string' ? ctx.user.id : undefined });
   return { ...ctx, doc };
 };
 
@@ -335,6 +351,7 @@ const persistHardRemove: PipelineFn = async (ctx) => {
   // clear the inverse FK first so the column's `onDelete: 'restrict'` doesn't refuse the delete.
   await detachReferenceToManyChildren(ctx.db, ctx.model, ctx.id);
   await hardRemoveRow(ctx.db, ctx.model, ctx.id);
+  await ctx.db.onMutation?.({ model: ctx.model, before: ctx.doc, after: null, event: 'remove', userId: typeof ctx.user?.id === 'string' ? ctx.user.id : undefined });
   return { ...ctx, doc: null };
 };
 

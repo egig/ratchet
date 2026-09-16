@@ -38,7 +38,7 @@ function schemaForFieldKind(f: FieldDefinition): ZodTypeAny {
     case 'fieldRef':
       // intentionally not checked against the registry here — no live registry exists when a
       // model's static field definitions are built. The real check is
-      // `validatePermissionTarget` (ratchet/auth), which runs per-request against `ctx.registry`.
+      // `validateRolePermissions` (ratchet/auth), which runs per-request against `ctx.registry`.
       return z.string();
     case 'file':
       // the shape returned by the upload endpoint (see `router/create-router.ts`) and stored

@@ -246,7 +246,7 @@ export function ModelFormPage({ onDone }: ModelFormPageProps) {
 
   const detailOperations =
     mode === 'update'
-      ? model.operations.filter((op) => op.placement.includes('detail') && hasPermission(user?.permissions ?? [], model.name, op.name))
+      ? model.operations.filter((op) => op.placement.includes('detail') && hasPermission(user?.permissions ?? {}, model.name, op.name))
       : [];
 
   return (

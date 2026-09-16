@@ -1,4 +1,4 @@
-import { defineModel, field, pipe, validate, persist, requireOwnsRow, PipelineError, type PipelineFn } from '../../core/index.js';
+import { defineModel, field, pipe, validate, persist, PipelineError, type PipelineFn } from '../../core/index.js';
 import { presetFields } from '../../auth/pipeline.js';
 
 /** Blocks writes to a `locked` workspace — its structure (its own fields, and via
@@ -6,8 +6,10 @@ import { presetFields } from '../../auth/pipeline.js';
  * a `Role`-provisioned workspace can be handed to someone who should only work with the data
  * inside it (see workspace-view.model.ts). No carve-out needed for `locked` itself anymore — see
  * `forbidLockedInUpdate` below, `locked` never reaches `update` in the first place, so unlocking a
- * locked row (via the `unlock` operation) never has to pass through this check at all. Must run
- * after `requireOwnsRow` so a non-owner still gets 404, not 403. */
+ * locked row (via the `unlock` operation) never has to pass through this check at all. A non-owner
+ * still gets 404, not 403, for the same reason as before — the router's `assertOwnsRow` (see
+ * `ApiModelOptions.ownerField`) runs before this model's pipeline is even invoked, so this never
+ * runs at all for a non-owner. */
 export const requireNotLocked: PipelineFn = (ctx) => {
   if (ctx.doc?.locked) {
     throw new PipelineError({ code: 'FORBIDDEN', status: 403 });
@@ -36,16 +38,16 @@ export const forbidLockedInUpdate: PipelineFn = (ctx) => {
 /**
  * A named collection of `WorkspaceView` tabs (workspace-view.model.ts), owned by exactly one
  * user. Unlike `Chat`/`Message` (src/automation/models), this stays reachable through the generic
- * `/api/:model` router — `api: { ownerField: 'userId' }` is what keeps that safe (create-router.ts
- * auto-scopes every read to the requesting user, `requireOwnsRow` below scopes every write) rather
- * than needing a dedicated router.
+ * `/api/:model` router — `api: { ownerField: 'userId' }` is what keeps that safe, rather than
+ * needing a dedicated router: every entry point (`create-router.ts`, `automation/tool.ts`)
+ * enforces ownership on every route, read or write, once it resolves the caller's `scope`
+ * (`Role.permissions`, ratchet/auth) — a model author never wires an ownership check by hand.
  *
  * `lock`/`unlock` are [custom operations](/guide/custom-operations) built on `presetFields` — the
  * framework's worked example for the "convenient action that's really a specific write" pattern
  * (a `lock`/`unlock` button in the console instead of exposing `locked` as an editable form field).
- * Each still runs `requireOwnsRow('userId')` first (composed the same way `create`/`update`/
- * `remove` already do — `api.ownerField` alone only scopes reads, not writes), nested inside the
- * operation's own `pipe(...)` around `presetFields`'s internal `pipe(validate, persist)`.
+ * Ownership is already checked before either operation's pipeline runs at all (same entry-point
+ * enforcement as `update`/`remove`), so neither needs to check it again itself.
  */
 export const Workspace = defineModel('workspaces', {
   fields: {
@@ -57,15 +59,15 @@ export const Workspace = defineModel('workspaces', {
     chatEnabled: field.boolean({ default: true }),
   },
   operations: {
-    create: pipe(requireOwnsRow('userId'), validate, persist),
-    update: pipe(requireOwnsRow('userId'), requireNotLocked, validate, persist),
-    remove: pipe(requireOwnsRow('userId'), requireNotLocked, persist.remove),
+    create: pipe(validate, persist),
+    update: pipe(requireNotLocked, validate, persist),
+    remove: pipe(requireNotLocked, persist.remove),
     lock: {
-      pipeline: pipe(requireOwnsRow('userId'), presetFields({ locked: true })),
+      pipeline: presetFields({ locked: true }),
       console: { label: 'Lock workspace', visibleWhen: { field: 'locked', equals: false } },
     },
     unlock: {
-      pipeline: pipe(requireOwnsRow('userId'), presetFields({ locked: false })),
+      pipeline: presetFields({ locked: false }),
       console: { label: 'Unlock workspace', visibleWhen: { field: 'locked', equals: true } },
     },
   },

@@ -36,7 +36,7 @@ export interface OperationConsoleOptions {
  * object (`OperationsConfig`) rather than a separate map, so it's picked up for free everywhere
  * `Object.keys(model.operations)` already drives behavior: the console's operation list
  * (`operationNames`/`operations` in `console/serialize-model.ts`), the `actionRef` field's
- * dropdown (`console/client/fields.tsx`), and `validatePermissionTarget`'s action-name
+ * dropdown (`console/client/fields.tsx`), and `validateRolePermissions`'s action-name
  * validation (ratchet/auth). Dispatched by one generic route, `POST /:model/:id/:operation`
  * (router/create-router.ts) — always record-scoped, always POST, regardless of what `pipeline`
  * does internally.
@@ -62,7 +62,7 @@ export type OperationEntry = PipelineFn | CustomOperationDefinition;
 
 /** Operation names no model may declare a custom operation under — `create`/`update`/`remove` are
  * the fixed builtin keys (typed separately below); `read` and `*` are reserved by the permission
- * system (`ratchet/auth`'s `validatePermissionTarget`); `upload` is reserved because
+ * system (`ratchet/auth`'s `validateRolePermissions`); `upload` is reserved because
  * `POST /:model/:field/upload` (router/create-router.ts) already occupies that exact path shape
  * for models with a `file` field. */
 export const RESERVED_OPERATION_NAMES: ReadonlySet<string> = new Set([
@@ -103,18 +103,24 @@ export interface ApiModelOptions {
    * unknown model name) — for a model whose only legitimate access path is a dedicated,
    * auth-scoped router. `console.hidden` alone doesn't do this: it only hides a model from the
    * console sidebar/`/meta/models`, the model stays reachable at `/api/:model` regardless. Set on
-   * `Chat`/`Message` (src/automation/models) because the generic router has no per-row ownership
-   * check — only `Chat`/`Message`'s own `/api/automation/chats/*` router (src/automation/router.ts)
-   * enforces that a chat and its messages are only readable by their owner. `Agent` stays generic-
-   * REST-readable since it's shared config with no owner, the same as `Role`. */
+   * `Chat`/`Message` (src/automation/models): a `Message`'s real owner is indirect — whoever owns
+   * its *parent* `Chat` — which the generic ownership mechanism (`ownerFieldOf`, direct column
+   * equality on the row itself) can't express; only `Chat`/`Message`'s own
+   * `/api/automation/chats/*` router (src/automation/router.ts) enforces that. `Agent`/`Role` stay
+   * generic-REST-readable — their default `createdById` ownership is available like any model's,
+   * just not restrictive enough on its own to replace a real permission grant for shared config
+   * everyone with access needs to see. */
   hidden?: boolean;
-  /** names the field that must equal the requesting user's id for a row to be readable/writable
-   * through the generic `/api/:model` router — the alternative to `hidden` for a model that *does*
-   * have a natural per-row owner and still wants generic REST access (e.g. `Workspace`,
-   * src/workspace/models). `create-router.ts`'s GET routes gate on it directly (auth + filter to
-   * the session user's own rows); write routes still need a matching `requireOwnsRow(ownerField)`
-   * step composed into the model's own `operations` pipeline (core/pipeline.ts) — this flag alone
-   * doesn't touch POST/PATCH/DELETE. */
+  /** overrides which field counts as a row's owner — every model has one by default (the
+   * auto-injected `createdById` system column, `core/pipeline.ts`'s `ownerFieldOf`), so this is
+   * only needed when the real owner differs from whoever created the row (e.g. `Workspace`'s
+   * `userId` — a self-registered user's default workspace is provisioned with no `ctx.user` at
+   * all, so `createdById` would be null there). Every route (`create-router.ts`, and
+   * `automation/tool.ts`'s agent-tool executor) enforces ownership automatically via
+   * `core/pipeline.ts`'s `forceOwnerOnCreate`/`assertOwnsRow` once it resolves the caller's
+   * `scope` for the action — a role's grant restricts this to `'own'` rows (the default when
+   * unset) or opens it to `'any'` (`Role.permissions`, ratchet/auth); a model author never wires
+   * an ownership check by hand. */
   ownerField?: string;
   /** opts this model out of the generic `/api/:model` router's implicit auth+permission gate
    * (every route on every model otherwise requires a matching role grant, including reads —
@@ -208,7 +214,7 @@ export function defineModel(name: string, config: DefineModelConfig): ModelDefin
 
   // Any other key in `operations` is a custom operation (Q11/Q19) — merged in as-is so
   // `Object.keys(model.operations)` picks it up everywhere that already enumerates operation
-  // names (console metadata, the `actionRef` field, `validatePermissionTarget`).
+  // names (console metadata, the `actionRef` field, `validateRolePermissions`).
   for (const [opName, entry] of Object.entries(config.operations ?? {})) {
     if (opName === 'create' || opName === 'update' || opName === 'remove') continue;
     if (RESERVED_OPERATION_NAMES.has(opName)) {

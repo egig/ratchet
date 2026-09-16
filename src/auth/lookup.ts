@@ -62,20 +62,28 @@ export async function findUserByEmail(db: AnyDb, email: string): Promise<UserRow
   return rows[0] ? (rowToCamelCase(rows[0]) as unknown as UserRow) : null;
 }
 
-export interface PermissionRow {
-  resource: string;
-  action: string;
-  /** null for a row scoped to a fieldless action (`remove`) — see `validatePermissionTarget`,
-   * which enforces that a `read`/`create`/`update`/`*` entry always has one and a `remove` entry
-   * never does. */
-  field: string | null;
+/** One resource+action node's grant, e.g. `permissions.documents.update`. `fields` names which
+ * columns are readable/writable for a field-shaped action (`read`/`create`/`update`/`'*'`) —
+ * `'*'` for every field, an array for an explicit list, `undefined` for a fieldless action
+ * (`remove`, or a custom operation) which has no field concept at all. `scope` restricts the
+ * grant to rows the requester owns (`'own'`) or every row (`'any'`) — only meaningful (and only
+ * valid, per `validateRolePermissions`) on a resource whose model declares `api.ownerField`. */
+export interface ActionGrant {
+  fields?: '*' | string[];
+  scope?: 'own' | 'any';
 }
 
-/** Reads one role's entire grant list off its `permissions` jsonb column (`Role.permissions`,
- * src/auth/models/role.model.ts) — no junction table anymore. A grant entry that omits `field`
- * entirely (rather than carrying an explicit `null`) is normalized to `field: null` here so every
- * caller (`resolveGrantedFields`, tests) can rely on `field: string | null`, never `undefined`. */
-export async function listPermissionsForRole(db: AnyDb, roleId: string): Promise<PermissionRow[]> {
+/** `Role.permissions`'s shape: `resource -> action -> grant`. Either key may be `'*'` — but never
+ * alongside a sibling specific key at that same level (`validateRolePermissions` enforces this at
+ * write time): a resource/action grouping is either fully wildcard or fully enumerated, never
+ * mixed, so the most-specific-key-wins lookup (`lookupActionGrant`, ratchet/auth) never has to
+ * merge two sources of truth. */
+export type RolePermissions = Record<string, Record<string, ActionGrant>>;
+
+/** Reads one role's entire grant tree off its `permissions` jsonb column (`Role.permissions`,
+ * src/auth/models/role.model.ts) — no junction table. Defaults to `{}` (no grants at all) for a
+ * user with no role. */
+export async function listPermissionsForRole(db: AnyDb, roleId: string): Promise<RolePermissions> {
   const rows = await db.execute(
     sql`SELECT permissions FROM roles WHERE id = ${roleId} AND deleted_at IS NULL LIMIT 1`,
   );
@@ -83,14 +91,9 @@ export async function listPermissionsForRole(db: AnyDb, roleId: string): Promise
   // A raw `db.execute(sql...)` bypasses Drizzle's schema-aware `mode: 'json'` column handling
   // (that only applies to the query builder), so `permissions` — a `text` column on SQLite —
   // comes back as a JSON string there, unlike Postgres' jsonb, which the driver already parses
-  // into an array/object. Parse it by hand only when it actually is a string, so this stays
-  // correct on both dialects without branching on `db.dialect` explicitly.
-  const raw = (typeof value === 'string' ? JSON.parse(value) : (value ?? [])) as Array<{
-    resource: string;
-    action: string;
-    field?: string | null;
-  }>;
-  return raw.map((p) => ({ resource: p.resource, action: p.action, field: p.field ?? null }));
+  // into an object. Parse it by hand only when it actually is a string, so this stays correct on
+  // both dialects without branching on `db.dialect` explicitly.
+  return (typeof value === 'string' ? JSON.parse(value) : (value ?? {})) as RolePermissions;
 }
 
 export interface RoleRow {
@@ -104,30 +107,27 @@ export async function findRoleByName(db: AnyDb, name: string): Promise<RoleRow |
 }
 
 /**
- * True once *any* user — active or not — holds a `*:*` permission through their role. Used to
- * decide whether `/api/auth/setup` (root-admin onboarding) is still open. Deliberately ignores
- * `active`: gating on it would let deactivating the sole root admin reopen unauthenticated root
- * creation to anyone who hits the console UI. `@>` is a jsonb "contains" check — true as soon as
- * *any* element of `roles.permissions` matches `{"resource":"*","action":"*"}`, regardless of
- * that element's own `field` value or how many other grants sit alongside it.
+ * True once *any* user — active or not — holds a `*:*` permission through their role (i.e.
+ * `permissions['*']['*']` exists). Used to decide whether `/api/auth/setup` (root-admin
+ * onboarding) is still open. Deliberately ignores `active`: gating on it would let deactivating
+ * the sole root admin reopen unauthenticated root creation to anyone who hits the console UI.
  */
 export async function hasRootAdmin(db: AnyDb): Promise<boolean> {
-  // `@>` (jsonb containment) has no SQLite equivalent — permissions is a `text({mode:'json'})`
-  // column there, so the same "any grant is `*:*`" check goes through `json_each` instead.
+  // SQLite's `permissions` column is `text({mode:'json'})`; `json_extract` with a quoted `"*"`
+  // path segment reaches the nested key regardless. Postgres' `->` chain does the jsonb
+  // equivalent, `?` checking the inner object actually has a `'*'` key (not just that `->'*'`
+  // didn't return SQL NULL).
   const query =
     db.dialect === 'sqlite'
       ? sql`SELECT 1
         FROM users u
         JOIN roles r ON r.id = u.role_id AND r.deleted_at IS NULL
-        WHERE u.deleted_at IS NULL AND EXISTS (
-          SELECT 1 FROM json_each(r.permissions)
-          WHERE json_extract(value, '$.resource') = '*' AND json_extract(value, '$.action') = '*'
-        )
+        WHERE u.deleted_at IS NULL AND json_extract(r.permissions, '$."*"."*"') IS NOT NULL
         LIMIT 1`
       : sql`SELECT 1
         FROM users u
         JOIN roles r ON r.id = u.role_id AND r.deleted_at IS NULL
-        WHERE u.deleted_at IS NULL AND r.permissions @> '[{"resource":"*","action":"*"}]'::jsonb
+        WHERE u.deleted_at IS NULL AND (r.permissions -> '*') ? '*'
         LIMIT 1`;
   const rows = await db.execute(query);
   return rows.length > 0;

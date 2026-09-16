@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineModel, field, pipe, validate, persist, requireOwnsRow } from '../../core/index.js';
+import { defineModel, field, pipe, validate, persist } from '../../core/index.js';
 import { requireWorkspaceOwnership } from '../pipeline.js';
 
 // a bare `field.json()` defaults to an object schema (z.record) — `filters`/`sort`/`include` are
@@ -26,9 +26,10 @@ const sortSchema = z.array(z.object({ field: z.string(), direction: z.enum(['asc
  * `GET /api/:model?filter=...&sort=...` call would run.
  *
  * `userId` is denormalized from the parent `Workspace` (rather than derived through a join) so
- * `api: { ownerField: 'userId' }` can scope reads the same simple way every other owner-scoped
- * model does; `requireWorkspaceOwnership` is what actually stops a view being attached to a
- * workspace this user doesn't own in the first place — `requireOwnsRow` alone only protects the
+ * `api: { ownerField: 'userId' }` can scope every route (read and write alike — see that field's
+ * own doc comment, core/model.ts) the same simple way every other owner-scoped model does;
+ * `requireWorkspaceOwnership` is what actually stops a view being attached to a workspace this
+ * user doesn't own in the first place — the entry-point ownership check alone only protects the
  * view row's own ownership, not the parent it claims to belong to.
  *
  * `console: { hidden: true }`: managed only through the Workspace screen (console/client's
@@ -49,9 +50,9 @@ export const WorkspaceView = defineModel('workspace_views', {
     order: field.integer({ default: 0, indexed: true }),
   },
   operations: {
-    create: pipe(requireOwnsRow('userId'), validate, requireWorkspaceOwnership, persist),
-    update: pipe(requireOwnsRow('userId'), validate, requireWorkspaceOwnership, persist),
-    remove: pipe(requireOwnsRow('userId'), requireWorkspaceOwnership, persist.remove),
+    create: pipe(validate, requireWorkspaceOwnership, persist),
+    update: pipe(validate, requireWorkspaceOwnership, persist),
+    remove: pipe(requireWorkspaceOwnership, persist.remove),
   },
   console: { hidden: true },
   api: { ownerField: 'userId' },

@@ -269,7 +269,7 @@ export function FieldInput(props: FieldInputProps) {
 
     case 'actionRef': {
       // when a concrete resource is chosen, only offer *its* operations; otherwise ('' or '*')
-      // fall back to the registry-wide union, matching `validatePermissionTarget`'s check.
+      // fall back to the registry-wide union, matching `validateRolePermissions`'s check.
       const scopedModel =
         selectedResource && selectedResource !== '*'
           ? modelRefOptions.find((m) => m.name === selectedResource)

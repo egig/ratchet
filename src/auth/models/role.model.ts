@@ -2,17 +2,17 @@ import { z } from 'zod';
 import { defineModel, field, pipe, validate, persist } from '../../core/index.js';
 import { requireValidPermissions } from '../pipeline.js';
 
-// a bare `field.json()` defaults to an object schema (z.record) — `permissions` is an array, so
-// it needs its own explicit shape (core/validation.ts's `baseSchemaForField` can't infer one).
-// One entry names a single grant: `resource`/`action` may each independently be `'*'`; `field` is
-// required for a field-shaped action (`read`/`create`/`update`/`*`) and forbidden for `remove` or
-// a custom operation — a cross-field rule `validatePermissionTarget` (ratchet/auth) enforces
-// against the live registry at request time, not this schema.
-const permissionTargetSchema = z.object({
-  resource: z.string(),
-  action: z.string(),
-  field: z.string().nullable().optional(),
+// `permissions` is a tree, `resource -> action -> grant` — either key may be `'*'`. `fields` is
+// required for a field-shaped action (`read`/`create`/`update`/`'*'`) and forbidden for `remove`
+// or a custom operation; `scope` only makes sense on a resource whose model declares
+// `api.ownerField`; sibling keys at either level can't mix `'*'` with specific keys — a
+// cross-field rule `validateRolePermissions` (ratchet/auth) enforces all of this against the live
+// registry at request time, not this schema.
+const actionGrantSchema = z.object({
+  fields: z.union([z.literal('*'), z.array(z.string())]).optional(),
+  scope: z.enum(['own', 'any']).optional(),
 });
+const permissionsSchema = z.record(z.string(), z.record(z.string(), actionGrantSchema));
 
 export const Role = defineModel('roles', {
   fields: {
@@ -28,12 +28,13 @@ export const Role = defineModel('roles', {
       indexed: true,
       displayText: 'Default Workspace',
     }),
-    // The role's entire grant list — one JSON column instead of a `Permission` junction table
-    // (docs/guide/auth.md). NOT `required: true` — `field.ts`'s `assertNoRequiredDefaultConflict`
-    // forbids `required` + `default` together, and a `default: []` column is never absent; every
-    // consumer already treats a missing/empty array as "no grants" (secure-by-default). Edited via
-    // a plain `PATCH /api/roles/:id` — see `role.form.tsx`'s tree UI — not a custom operation.
-    permissions: field.json({ schema: z.array(permissionTargetSchema), default: [] }),
+    // The role's entire grant tree — one JSON column instead of a `Permission` junction table
+    // (docs/content/docs/auth.mdx). NOT `required: true` — `field.ts`'s
+    // `assertNoRequiredDefaultConflict` forbids `required` + `default` together, and a
+    // `default: {}` column is never absent; every consumer already treats a missing/empty object
+    // as "no grants" (secure-by-default). Edited via a plain `PATCH /api/roles/:id` — see
+    // `role.form.tsx`'s tree UI — not a custom operation.
+    permissions: field.json({ schema: permissionsSchema, default: {} }),
   },
   operations: {
     create: pipe(validate, requireValidPermissions, persist),

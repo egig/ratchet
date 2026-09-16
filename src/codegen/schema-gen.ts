@@ -165,7 +165,7 @@ function emitTable(model: ModelDefinition, dialect: Dialect, extraLines: string[
     `  deletedAt: ${tsCol('deleted_at')},`,
     // Q30: audit trail, not ownership — nullable (self-registration and other unauthenticated
     // creates have no actor to stamp) and RESTRICT like every other reference() column, but never
-    // declarable via field.* and never touched by requireOwnsRow/updateRow.
+    // declarable via field.* and never touched by the ownership-scope helpers/updateRow.
     `  createdById: ${createdByCol},`,
     // manyToMany has no column of its own — it's backed by a separate junction table instead
     // (see emitJunctionTable), so it's excluded here rather than passed to columnExpr. referenceToMany

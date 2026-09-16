@@ -37,7 +37,7 @@ describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS roles (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '[]'
+        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '{}'
       )`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS users (
@@ -68,9 +68,17 @@ describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
     await client.end();
   });
 
-  async function createRole(permissions: unknown[]): Promise<string> {
+  async function createRole(grants: { resource: string; action: string; field?: string; scope?: 'own' | 'any' }[]): Promise<string> {
     const roleId = generateId();
     const now = new Date().toISOString();
+    const permissions: Record<string, Record<string, { fields?: '*' | string[]; scope?: 'own' | 'any' }>> = {};
+    for (const g of grants) {
+      const actionMap = (permissions[g.resource] ??= {});
+      actionMap[g.action] = {
+        ...(g.field !== undefined ? { fields: g.field === '*' ? '*' : [g.field] } : {}),
+        ...(g.scope !== undefined ? { scope: g.scope } : {}),
+      };
+    }
     await db.execute(
       sql`INSERT INTO roles (id, created_at, updated_at, name, permissions)
           VALUES (${roleId}, ${now}, ${now}, ${`role-${roleId}`}, ${JSON.stringify(permissions)})`,
@@ -208,7 +216,7 @@ describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
     it('list_ returns the rows in a { data, meta } envelope', async () => {
       await insertGizmo('alpha');
       await insertGizmo('beta');
-      const roleId = await createRole([{ resource: 'gizmos', action: 'read', field: '*' }]);
+      const roleId = await createRole([{ resource: 'gizmos', action: 'read', field: '*', scope: 'any' }]);
       const chattingUser = await createSessionUser(roleId);
       const tool = await toolsFor(roleId, 'list_gizmos');
 
@@ -223,7 +231,7 @@ describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
     it('list_ applies filters through the same parser the REST route uses', async () => {
       await insertGizmo('keep');
       await insertGizmo('drop');
-      const roleId = await createRole([{ resource: 'gizmos', action: 'read', field: '*' }]);
+      const roleId = await createRole([{ resource: 'gizmos', action: 'read', field: '*', scope: 'any' }]);
       const chattingUser = await createSessionUser(roleId);
       const tool = await toolsFor(roleId, 'list_gizmos');
 
@@ -237,7 +245,7 @@ describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
 
     it('findOne_ returns a single row by id, 404s for an unknown id', async () => {
       const id = await insertGizmo('solo');
-      const roleId = await createRole([{ resource: 'gizmos', action: 'read', field: '*' }]);
+      const roleId = await createRole([{ resource: 'gizmos', action: 'read', field: '*', scope: 'any' }]);
       const chattingUser = await createSessionUser(roleId);
       const tool = await toolsFor(roleId, 'findOne_gizmos');
 
@@ -266,7 +274,7 @@ describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
     it('field-level read grant scopes which columns come back', async () => {
       await insertGizmo('visible-name');
       // read granted, but no `field` grant at all → zero model fields (id/timestamps only).
-      const roleId = await createRole([{ resource: 'gizmos', action: 'read' }]);
+      const roleId = await createRole([{ resource: 'gizmos', action: 'read', scope: 'any' }]);
       const chattingUser = await createSessionUser(roleId);
       const tool = await toolsFor(roleId, 'list_gizmos');
 

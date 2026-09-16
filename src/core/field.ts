@@ -84,7 +84,7 @@ export interface ReferenceFieldDefinition extends BaseFieldDefinition {
 
 /** Names a model itself (e.g. `'users'`), not a row within one — unlike `ReferenceFieldDefinition`
  * there's no fixed `targetModel`: any model in the app's registry is a valid value. Validation
- * against the live registry happens at request time (see `ratchet/auth`'s `validatePermissionTarget`),
+ * against the live registry happens at request time (see `ratchet/auth`'s `validateRolePermissions`),
  * not here — `baseSchemaForField` treats it as a plain string, since no registry exists yet when a
  * model file's static field definitions are evaluated. `allowWildcard` is UI-only metadata (see
  * `ConsoleFieldMeta`/`fields.tsx`): it doesn't loosen validation, it just tells the console form
@@ -96,7 +96,7 @@ export interface ModelRefFieldDefinition extends BaseFieldDefinition {
 
 /** Names an *operation* (e.g. `'create'`) rather than declaring a fixed set of them — the real
  * set is whichever operation names actually exist across the app's models, read from the live
- * registry at request time (see `ratchet/auth`'s `validatePermissionTarget`), the same way
+ * registry at request time (see `ratchet/auth`'s `validateRolePermissions`), the same way
  * `ModelRefFieldDefinition` reads model names. `allowWildcard` mirrors `ModelRefFieldDefinition`'s. */
 export interface ActionRefFieldDefinition extends BaseFieldDefinition {
   kind: 'actionRef';
@@ -105,11 +105,11 @@ export interface ActionRefFieldDefinition extends BaseFieldDefinition {
 
 /** Names a *field* on whichever model a sibling `modelRef` value points at (e.g. `Role.permissions`'
  * `field` key names a field on the model its own `resource` key points at) — validated
- * against the live registry at request time (see `ratchet/auth`'s `validatePermissionTarget`),
+ * against the live registry at request time (see `ratchet/auth`'s `validateRolePermissions`),
  * the same way `ModelRefFieldDefinition`/`ActionRefFieldDefinition` are. `allowWildcard` mirrors
  * theirs: it lets `'*'` stand for "every field." Unlike `resource`/`action`, requiredness isn't a
  * static per-field setting here — whether a given row even needs a `field` value depends on that
- * row's own `action` (e.g. `remove` has no field-shaped meaning at all), so `validatePermissionTarget`
+ * row's own `action` (e.g. `remove` has no field-shaped meaning at all), so `validateRolePermissions`
  * enforces that conditionally rather than `field.ts` declaring `required: true`. */
 export interface FieldRefFieldDefinition extends BaseFieldDefinition {
   kind: 'fieldRef';

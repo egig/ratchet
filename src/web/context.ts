@@ -3,13 +3,13 @@ import type { FileStorage } from '@flystorage/file-storage';
 import type { ModelDefinition } from '../core/model.js';
 import type { DomainDefinition } from '../core/domain.js';
 import { resolveSessionToken } from '../auth/cookie.js';
-import { findSessionByToken, findUserById, listPermissionsForRole, type PermissionRow, type UserRow } from '../auth/lookup.js';
+import { findSessionByToken, findUserById, listPermissionsForRole, type RolePermissions, type UserRow } from '../auth/lookup.js';
 import { getDomainSettings } from '../core/domain-settings-persistence.js';
 
 
 export interface WebSession {
   user: UserRow;
-  permissions: PermissionRow[];
+  permissions: RolePermissions;
   /** true when the user's role owns a permission matching `(resource, action)` (either side `*`). */
   can(resource: string, action: string): boolean;
 }
@@ -40,8 +40,9 @@ export function getWebContext(context: unknown): WebLoaderContext {
   return context as WebLoaderContext;
 }
 
-function permissionAllows(permissions: PermissionRow[], resource: string, action: string): boolean {
-  return permissions.some((p) => (p.resource === resource || p.resource === '*') && (p.action === action || p.action === '*'));
+function permissionAllows(permissions: RolePermissions, resource: string, action: string): boolean {
+  const resourceNode = permissions[resource] ?? permissions['*'];
+  return resourceNode !== undefined && (resourceNode[action] ?? resourceNode['*']) !== undefined;
 }
 
 async function resolveWebSession(db: AnyDb, request: Request): Promise<WebSession | null> {
@@ -51,7 +52,7 @@ async function resolveWebSession(db: AnyDb, request: Request): Promise<WebSessio
   if (!session || new Date(session.expiresAt).getTime() <= Date.now()) return null;
   const user = await findUserById(db, session.userId);
   if (!user || !user.active) return null;
-  const permissions = typeof user.roleId === 'string' ? await listPermissionsForRole(db, user.roleId) : [];
+  const permissions = typeof user.roleId === 'string' ? await listPermissionsForRole(db, user.roleId) : {};
   return {
     user,
     permissions,

@@ -50,12 +50,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (body as { data: T }).data;
 }
 
+/** Mirrors `ratchet/auth`'s `ActionGrant`/`RolePermissions` (src/auth/lookup.ts) — duplicated
+ * rather than imported so this browser bundle never pulls in that module's server-only
+ * dependencies (drizzle/db types). `resource -> action -> grant`; either key may be `'*'`. */
+interface ClientActionGrant {
+  fields?: '*' | string[];
+  scope?: 'own' | 'any';
+}
+type ClientRolePermissions = Record<string, Record<string, ClientActionGrant>>;
+
 export interface AuthUser {
   id: string;
   email: string;
   roleId: string | null;
   active: boolean;
-  permissions: { resource: string; action: string }[];
+  permissions: ClientRolePermissions;
 }
 
 export function setupStatus(): Promise<{ required: boolean }> {
@@ -223,8 +232,11 @@ export function uploadDomainSettingsFile(domain: string, field: string, file: Fi
   return uploadTo(`${MOUNT_PREFIX}/meta/domains/${encodeURIComponent(domain)}/settings/${encodeURIComponent(field)}/upload`, file);
 }
 
+/** Most-specific-wins lookup, mirroring `ratchet/auth`'s `lookupActionGrant` (src/auth/pipeline.ts) —
+ * a specific resource/action key always shadows a `'*'` sibling rather than merging with it. */
 export function hasPermission(permissions: AuthUser['permissions'], resource: string, action: string): boolean {
-  return permissions.some((p) => (p.resource === resource || p.resource === '*') && (p.action === action || p.action === '*'));
+  const resourceNode = permissions[resource] ?? permissions['*'];
+  return resourceNode !== undefined && (resourceNode[action] ?? resourceNode['*']) !== undefined;
 }
 
 export interface ChatSummary {

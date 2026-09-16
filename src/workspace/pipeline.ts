@@ -15,11 +15,12 @@ export function assertOwnsWorkspace(
   }
 }
 
-/** `requireOwnsRow('userId')` (core/pipeline.ts) only protects a `WorkspaceView` row's own
- * ownership — it says nothing about whether the `workspaceId` it claims to belong to is actually
- * one of the requesting user's own workspaces. This is what stops a create/update from attaching a
- * view to (or moving it into) someone else's workspace. Must run after `validate` so
- * `ctx.input.workspaceId` is a validated string.
+/** The entry-point ownership check every route already applies (`ApiModelOptions.ownerField`,
+ * core/model.ts) only protects a `WorkspaceView` row's own ownership — it says nothing about
+ * whether the `workspaceId` it claims to belong to is actually one of the requesting user's own
+ * workspaces. This is what stops a create/update from attaching a view to (or moving it into)
+ * someone else's workspace. Must run after `validate` so `ctx.input.workspaceId` is a validated
+ * string.
  *
  * Also enforces the parent workspace's `locked` flag on this write — a locked workspace's views
  * can't be created/updated/removed. This check lives here, not in `assertOwnsWorkspace`, because

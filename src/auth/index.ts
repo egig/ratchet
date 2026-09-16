@@ -5,13 +5,13 @@ export {
   requireAuth,
   requirePermission,
   requireValidPermissions,
-  validatePermissionTarget,
+  validateRolePermissions,
   authorizeRequest,
   resolveGrantedFields,
   assertWriteFieldsAllowed,
   presetFields,
   FIELDLESS_ACTIONS,
 } from './pipeline.js';
-export type { GrantedFields, PermissionTarget } from './pipeline.js';
+export type { GrantedFields, ActionGrant, RolePermissions } from './pipeline.js';
 export { hashPassword, verifyPassword } from './password.js';
-export type { PermissionRow, UserRow } from './lookup.js';
+export type { UserRow } from './lookup.js';

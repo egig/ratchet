@@ -130,7 +130,7 @@ export function WorkspacePage() {
   // targets the first sidebar model directly — otherwise the "Console" link would just loop in place.
   const consolePath = models[0] ? `/${models[0].name}` : '/';
   // mirrors the server's `hasRootAdmin` check (src/auth/lookup.ts): a `*:*` permission.
-  const isRoot = user?.permissions.some((p) => p.resource === '*' && p.action === '*') ?? false;
+  const isRoot = user?.permissions['*']?.['*'] !== undefined;
 
   // the generic `/api/workspaces` GET is always owner-scoped (`api.ownerField`, create-router.ts),
   // so every row here is one the current user owns — no extra ownership check before showing the

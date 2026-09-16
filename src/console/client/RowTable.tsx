@@ -492,14 +492,14 @@ export function RowTable({
     placeholderData: keepPreviousData,
   });
 
-  const canCreate = hasPermission(user?.permissions ?? [], model.name, 'create');
-  const canUpdate = hasPermission(user?.permissions ?? [], model.name, 'update');
-  const canRemove = hasPermission(user?.permissions ?? [], model.name, 'remove');
+  const canCreate = hasPermission(user?.permissions ?? {}, model.name, 'create');
+  const canUpdate = hasPermission(user?.permissions ?? {}, model.name, 'update');
+  const canRemove = hasPermission(user?.permissions ?? {}, model.name, 'remove');
   // Custom operations (core/model.ts's `CustomOperationDefinition`) placed in the row actions —
   // permission-gated the same way Edit/Delete are (`resource:operationName`); `visibleWhen`
   // (Q13, per-row data) is checked per row by `OperationButton` itself, not here.
   const rowOperations = model.operations.filter(
-    (op) => op.placement.includes('row') && hasPermission(user?.permissions ?? [], model.name, op.name),
+    (op) => op.placement.includes('row') && hasPermission(user?.permissions ?? {}, model.name, op.name),
   );
 
   function refetchRows() {

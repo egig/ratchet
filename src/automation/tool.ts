@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { AnyDb } from '../core/db.js';
 import type { CustomOperationDefinition, ModelDefinition, OperationContext, PipelineFn } from '../core/index.js';
-import { buildCreateSchema, buildUpdateSchema, buildParamsSchema, PipelineError } from '../core/index.js';
+import { buildCreateSchema, buildUpdateSchema, buildParamsSchema, PipelineError, assertOwnsRow, forceOwnerOnCreate, ownerFieldOf } from '../core/index.js';
 import { authorizeRequest, resolveGrantedFields, assertWriteFieldsAllowed, pickGrantedFields } from '../auth/pipeline.js';
 import { listPermissionsForRole } from '../auth/lookup.js';
 import { listRows, getOneRow } from '../router/list.js';
@@ -189,22 +189,24 @@ export async function resolveAgentTools(
   roleId: string | null,
 ): Promise<AgentTool[]> {
   if (!roleId) return [];
-  const grants = await listPermissionsForRole(db, roleId);
+  const permissions = await listPermissionsForRole(db, roleId);
   const byName = new Map<string, AgentTool>();
 
-  for (const grant of grants) {
-    for (const { model, operation } of expandGrant(registry, grant.resource, grant.action)) {
-      const name = toolName(operation, model.name);
-      if (byName.has(name)) continue;
-      byName.set(name, {
-        model,
-        operation,
-        spec: {
-          name,
-          description: toolDescription(model, operation),
-          parameters: toJsonSchema(toolInputSchema(model, operation)),
-        },
-      });
+  for (const resource of Object.keys(permissions)) {
+    for (const action of Object.keys(permissions[resource]!)) {
+      for (const { model, operation } of expandGrant(registry, resource, action)) {
+        const name = toolName(operation, model.name);
+        if (byName.has(name)) continue;
+        byName.set(name, {
+          model,
+          operation,
+          spec: {
+            name,
+            description: toolDescription(model, operation),
+            parameters: toJsonSchema(toolInputSchema(model, operation)),
+          },
+        });
+      }
     }
   }
 
@@ -241,14 +243,19 @@ function buildOpContext(
  *   `listRows`/`getOneRow` + `assertReadFieldsAllowed` + `pickGrantedFields` +
  *   `filterIncludedRelations` the generic `GET /api/:model` routes run — the `read` field grant
  *   scopes which columns come back and `?include=`d relations are filtered by their own model's
- *   grant, exactly as over REST. `api.ownerField` models are scoped to the chatting user's rows.
+ *   grant, exactly as over REST. Every model is scoped to the chatting user's own rows (via
+ *   `ownerFieldOf`) whenever the resolved `read` grant's `scope` is `'own'` (the default when
+ *   unset).
  * - builtin write: `authorizeRequest` for the `resource:action` grant, then `resolveGrantedFields`
  *   + `assertWriteFieldsAllowed` for create/update's field-level grant (`remove` has no field
- *   concept).
+ *   concept); `create` force-sets the owner (`forceOwnerOnCreate`), `update`/`remove` check
+ *   ownership first when the grant's `scope` is `'own'` (`assertOwnsRow`) — the same two
+ *   `core/pipeline.ts` helpers `create-router.ts` uses, since a model author no longer wires an
+ *   ownership check into the pipeline itself.
  * - custom: `authorizeRequest` for the `resource:<operation>` grant only — mirrors
- *   `create-router.ts`'s `resolveAccess(model, operationName)`. Whatever the operation's own
- *   pipeline writes is gated by that pipeline (e.g. `presetFields` re-checks the `update` field
- *   grant), not here.
+ *   `create-router.ts`'s `resolveAccess(model, operationName)`, including the same `assertOwnsRow`
+ *   check when that grant's `scope` is `'own'`. Whatever the operation's own pipeline writes is
+ *   gated by that pipeline (e.g. `presetFields` re-checks the `update` field grant), not here.
  *
  * The agent's own `Role` only decided which tools it was offered; this is what stops it from
  * doing more than the chat's own user could already do via the REST API.
@@ -299,16 +306,16 @@ async function executeReadTool(
 
   // Same "the chatting user, never the agent alone" gate the write paths use — here for the
   // implicit `read` action, exactly as `create-router.ts`'s GET routes call `authorizeRequest`.
-  const user = await authorizeRequest(ctx.db, ctx.request, tool.model.name, 'read');
+  const { user, scope: grantedScope } = await authorizeRequest(ctx.db, ctx.request, tool.model.name, 'read');
   const granted = await resolveGrantedFields(ctx.db, user.roleId, tool.model.name, 'read');
-  const ownerField = tool.model.api?.ownerField;
+  const scope = grantedScope ?? 'own';
 
   if (tool.operation === 'findOne') {
     const id = args.id as string;
     const includeArg = (args.include as string[] | undefined) ?? [];
     const include = parseInclude(tool.model, includeArg.length > 0 ? includeArg.join(',') : null, ctx.registry);
     const row = await getOneRow(ctx.db, tool.model, ctx.registry, id, { includeDeleted: false, include });
-    if (!row || (ownerField && row[ownerField] !== user.id)) {
+    if (!row || (scope === 'own' && row[ownerFieldOf(tool.model)] !== user.id)) {
       throw new PipelineError({ code: 'NOT_FOUND', status: 404 });
     }
     await filterIncludedRelations(ctx.db, ctx.registry, tool.model, row, include, user.roleId);
@@ -321,7 +328,7 @@ async function executeReadTool(
     ctx.registry,
   );
   assertReadFieldsAllowed(tool.model, query, granted);
-  if (ownerField) query.filters.push({ field: ownerField, op: '=', value: user.id });
+  if (scope === 'own') query.filters.push({ field: ownerFieldOf(tool.model), op: '=', value: user.id });
 
   const page = await listRows(ctx.db, tool.model, ctx.registry, query);
   for (const row of page.rows) {
@@ -338,14 +345,20 @@ async function executeBuiltinTool(
   input: Record<string, unknown>,
   ctx: { db: AnyDb; request: Request | undefined; registry: Record<string, ModelDefinition> },
 ): Promise<unknown> {
-  const user = await authorizeRequest(ctx.db, ctx.request, tool.model.name, tool.operation);
+  const { user, scope: grantedScope } = await authorizeRequest(ctx.db, ctx.request, tool.model.name, tool.operation);
 
   const { id, ...rest } = input as { id?: string } & Record<string, unknown>;
-  const writeInput = tool.operation === 'create' ? input : rest;
+  let writeInput = tool.operation === 'create' ? input : rest;
 
   if (tool.operation === 'create' || tool.operation === 'update') {
     const granted = await resolveGrantedFields(ctx.db, user.roleId, tool.model.name, tool.operation);
     assertWriteFieldsAllowed(tool.model, writeInput, granted);
+  }
+
+  if (tool.operation === 'create') {
+    writeInput = forceOwnerOnCreate(tool.model, writeInput, user.id);
+  } else if ((grantedScope ?? 'own') === 'own') {
+    await assertOwnsRow(ctx.db, tool.model, id!, user.id);
   }
 
   const result = await tool.model.operations[tool.operation as BuiltinOperation](
@@ -366,10 +379,14 @@ async function executeCustomTool(
 
   // Resource-level "can this role invoke this operation at all" gate only — same as
   // create-router.ts's `resolveAccess(model, operationName)`.
-  const user = await authorizeRequest(ctx.db, ctx.request, tool.model.name, tool.operation);
+  const { user, scope: grantedScope } = await authorizeRequest(ctx.db, ctx.request, tool.model.name, tool.operation);
 
   const { id, ...rest } = input as { id?: string } & Record<string, unknown>;
   if (typeof id !== 'string') throw new Error(`'${tool.operation}' needs an 'id' (custom operations are record-scoped)`);
+
+  if ((grantedScope ?? 'own') === 'own') {
+    await assertOwnsRow(ctx.db, tool.model, id, user.id);
+  }
 
   let params: Record<string, unknown> = {};
   if (def?.params) {

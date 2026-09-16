@@ -36,16 +36,22 @@ export async function provisionRootAdmin(db: AnyDb, params: { email: string; pas
 
     const role = (await findRoleByName(tx, ROOT_ROLE_NAME)) ?? (await insertRow(tx, Role, { name: ROOT_ROLE_NAME }));
     const permissions = await listPermissionsForRole(tx, role.id as string);
-    if (!permissions.some((p) => p.resource === '*' && p.action === '*')) {
-      // `field: '*'` isn't optional here even though `action: '*'` already implies the
-      // fieldless `remove` action — field-level permission is checked independently of
-      // action-level (docs/guide/auth.md), so an explicit field value is still required for the
+    if (permissions['*']?.['*'] === undefined) {
+      // `fields: '*'` isn't optional here even though `action: '*'` already implies the fieldless
+      // `remove` action — field-level permission is checked independently of action-level
+      // (docs/content/docs/auth.mdx), so an explicit fields value is still required for the
       // field-shaped actions ('*' covers read/create/update too). Without it, secure-by-default
       // field permission would brick the console immediately after setup: the root admin could
       // log in but see/write no fields on any model, with no way to grant the first field
-      // permission. Self-heals an existing `Root` role that predates a `*:*` grant by appending
-      // one rather than replacing the array outright.
-      await updateRow(tx, Role, role.id as string, { permissions: [...permissions, { resource: '*', action: '*', field: '*' }] });
+      // permission. `scope: 'any'` isn't optional either — every model now has a default owner
+      // (`createdById`, `core/pipeline.ts`'s `ownerFieldOf`) and an unspecified `scope` defaults
+      // to `'own'`, so without this Root would only ever see/manage rows it personally created,
+      // not the unrestricted access the role is meant to grant. Replaces the whole tree rather
+      // than appending alongside it: the "no mixing '*' with specific resource keys" rule
+      // (`validateRolePermissions`) means a `'*'` grant can never coexist with whatever
+      // specific-resource grants an existing `Root` role might already carry — and `*:*` already
+      // implies every one of them anyway.
+      await updateRow(tx, Role, role.id as string, { permissions: { '*': { '*': { fields: '*', scope: 'any' } } } });
     }
 
     const user = await insertRow(tx, User, { email: params.email, passwordHash: await hashPassword(params.password), roleId: role.id });

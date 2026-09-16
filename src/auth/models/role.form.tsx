@@ -5,65 +5,96 @@
  * `roles.form.tsx` (docs/guide/console.md#custom-forms), unless it actually does (a consumer's own
  * `roles.form.tsx` takes precedence — see `generate()`, src/codegen/generate.ts).
  *
- * Combines editing the role's own fields with managing its entire `permissions` grant array
+ * Combines editing the role's own fields with managing its entire `permissions` grant tree
  * (`role.model.ts`) in one Save — a plain `POST`/`PATCH` write like any other field, no custom
- * operation involved. Permissions render as a tree of checkboxes:
+ * operation involved. Permissions render as a tree of checkboxes, `resource -> action -> field`:
  *
  *   *  (All resources)      <- checking this grants everything; nothing else matters
  *     -> <resource>          <- checking this grants every action (and field) on it
- *        -> <action>          <- checking this grants every field of a field-shaped action
+ *        -> <action>          <- checking this grants every field of a field-shaped action;
+ *                                 an own/any toggle appears here too (every model has an owner)
  *           -> <field>          <- individual field grant
  *
- * A fully-checked subtree always collapses to one wildcard row (`action: '*'` or `field: '*'`)
- * rather than one row per child — the same shape a hand-written grant would use.
+ * A fully-checked subtree always collapses to one wildcard key (`action: '*'` or `fields: '*'`)
+ * rather than one entry per child, and — per `validateRolePermissions` (ratchet/auth) — a `'*'`
+ * key never coexists with a sibling specific key at the same level, so every mutation here
+ * computes a whole level's desired key set fresh rather than patching one row at a time.
  */
 import { useEffect, useRef, useState } from 'react';
 import { createRow, getRow, updateRow, type ModelFormProps } from '../../console/client/index.js';
 
-interface Target {
-  resource: string;
-  action: string;
-  field?: string;
+/** Mirrors `ratchet/auth`'s `ActionGrant`/`RolePermissions` (src/auth/lookup.ts) — duplicated
+ * rather than imported so this browser-bundled form never pulls in that module's server-only
+ * dependencies, the same reasoning as `console/client/api.ts`'s own copy. */
+interface ActionGrant {
+  fields?: '*' | string[];
+  scope?: 'own' | 'any';
 }
+type RolePermissions = Record<string, Record<string, ActionGrant>>;
 
 type CheckState = 'checked' | 'unchecked' | 'indeterminate';
 
-function isGlobalGranted(targets: Target[]): boolean {
-  return targets.some((t) => t.resource === '*' && t.action === '*');
+function isGlobalGranted(permissions: RolePermissions): boolean {
+  return permissions['*']?.['*'] !== undefined;
 }
 
-function isResourceGranted(targets: Target[], resource: string): boolean {
-  return isGlobalGranted(targets) || targets.some((t) => t.resource === resource && t.action === '*');
+function isResourceGranted(permissions: RolePermissions, resource: string): boolean {
+  return isGlobalGranted(permissions) || permissions[resource]?.['*'] !== undefined;
 }
 
-/** The field keys currently granted for one `(resource, action)` pair — `'*'` expands to every
- * field `allFieldKeys` names, so toggling a single field off a wildcard grant has something
+/** The field keys currently granted for one `(resource, action)` pair — `fields: '*'` expands to
+ * every field `allFieldKeys` names, so toggling a single field off a wildcard grant has something
  * concrete to remove one key from. */
-function grantedFieldKeys(targets: Target[], resource: string, action: string, allFieldKeys: string[]): string[] {
-  if (targets.some((t) => t.resource === resource && t.action === action && t.field === '*')) return allFieldKeys;
-  return targets.filter((t) => t.resource === resource && t.action === action && t.field && t.field !== '*').map((t) => t.field!);
+function grantedFieldKeys(permissions: RolePermissions, resource: string, action: string, allFieldKeys: string[]): string[] {
+  const grant = permissions[resource]?.[action];
+  if (!grant) return [];
+  return grant.fields === '*' ? allFieldKeys : (grant.fields ?? []);
 }
 
-function actionState(targets: Target[], resource: string, action: string, fieldShaped: boolean, allFieldKeys: string[]): CheckState {
-  if (isResourceGranted(targets, resource)) return 'checked';
+function actionState(permissions: RolePermissions, resource: string, action: string, fieldShaped: boolean, allFieldKeys: string[]): CheckState {
+  if (isResourceGranted(permissions, resource)) return 'checked';
   if (!fieldShaped) {
-    return targets.some((t) => t.resource === resource && t.action === action) ? 'checked' : 'unchecked';
+    return permissions[resource]?.[action] !== undefined ? 'checked' : 'unchecked';
   }
-  const granted = grantedFieldKeys(targets, resource, action, allFieldKeys);
+  const granted = grantedFieldKeys(permissions, resource, action, allFieldKeys);
   if (granted.length === 0) return 'unchecked';
   if (granted.length === allFieldKeys.length) return 'checked';
   return 'indeterminate';
 }
 
-/** Replaces every field-level row for one `(resource, action)` with a fresh set — collapsing back
- * to a single `field: '*'` row when the new set covers every field, dropping the action's rows
- * entirely when it's empty, same "desired set, not a patch" shape the whole `permissions` array
- * is saved as (one `PATCH`/`POST` write of the entire array, not a per-row diff). */
-function replaceActionFields(targets: Target[], resource: string, action: string, fieldKeys: string[], allFieldKeys: string[]): Target[] {
-  const rest = targets.filter((t) => !(t.resource === resource && t.action === action));
-  if (fieldKeys.length === 0) return rest;
-  if (fieldKeys.length === allFieldKeys.length) return [...rest, { resource, action, field: '*' }];
-  return [...rest, ...fieldKeys.map((field) => ({ resource, action, field }))];
+/** `'own'` is the default a role gets when a grant doesn't specify `scope` at all (matches the
+ * server's own default, `resolveScope`/`authorizeRequest`, ratchet/auth) — so an ungranted action
+ * shows `'own'` too, though the toggle stays disabled until the action is actually checked. */
+function actionScope(permissions: RolePermissions, resource: string, action: string): 'own' | 'any' {
+  return permissions[resource]?.[action]?.scope ?? 'own';
+}
+
+/** Replaces one resource's entire action map, dropping the resource key entirely once its action
+ * map is empty — keeps `permissions` from accumulating `{}`  entries for a resource with nothing
+ * granted on it. */
+function setResourceActions(permissions: RolePermissions, resource: string, actionMap: Record<string, ActionGrant>): RolePermissions {
+  const { [resource]: _drop, ...rest } = permissions;
+  return Object.keys(actionMap).length === 0 ? rest : { ...rest, [resource]: actionMap };
+}
+
+/** Replaces one `(resource, action)` grant's field set — collapsing back to `fields: '*'` when the
+ * new set covers every field, dropping the action entirely when it's empty, same "desired set, not
+ * a patch" shape the whole `permissions` tree is saved as (one `PATCH`/`POST` write, not a per-node
+ * diff). Preserves whatever `scope` the action already had. */
+function replaceActionFields(
+  permissions: RolePermissions,
+  resource: string,
+  action: string,
+  fieldKeys: string[],
+  allFieldKeys: string[],
+): RolePermissions {
+  const actionMap = permissions[resource] ?? {};
+  const existingScope = actionMap[action]?.scope;
+  const { [action]: _drop, ...restActions } = actionMap;
+  if (fieldKeys.length === 0) return setResourceActions(permissions, resource, restActions);
+  const fields = fieldKeys.length === allFieldKeys.length ? ('*' as const) : fieldKeys;
+  const grant: ActionGrant = existingScope ? { fields, scope: existingScope } : { fields };
+  return setResourceActions(permissions, resource, { ...restActions, [action]: grant });
 }
 
 function TriCheckbox({
@@ -91,9 +122,35 @@ function TriCheckbox({
   );
 }
 
+/** Own/any control for one action node — rendered for every resource, since every model has an
+ * owner (`ConsoleModelMeta.ownerField`, `core/pipeline.ts`'s `ownerFieldOf`); disabled until the
+ * action itself is actually granted (a scope on an ungranted action means nothing). */
+function ScopeToggle({
+  scope,
+  disabled,
+  onChange,
+}: {
+  scope: 'own' | 'any';
+  disabled?: boolean;
+  onChange: (scope: 'own' | 'any') => void;
+}) {
+  return (
+    <select
+      value={scope}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value as 'own' | 'any')}
+      className="rounded border border-gray-300 py-0.5 pl-1 pr-5 text-xs text-gray-600 disabled:opacity-50"
+      title="Restrict this action to the requester's own rows, or allow every row"
+    >
+      <option value="own">own rows</option>
+      <option value="any">any row</option>
+    </select>
+  );
+}
+
 export default function RoleForm({ model, mode, id, fields, onDone, models }: ModelFormProps) {
   const [values, setValues] = useState<Record<string, unknown>>({});
-  const [targets, setTargets] = useState<Target[]>([]);
+  const [permissions, setPermissions] = useState<RolePermissions>({});
   const [loading, setLoading] = useState(mode === 'update');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -105,13 +162,7 @@ export default function RoleForm({ model, mode, id, fields, onDone, models }: Mo
       const row = await getRow(model.name, id);
       if (cancelled) return;
       setValues({ name: row.name, description: row.description, workspaceTemplateId: row.workspaceTemplateId });
-      setTargets(
-        ((row.permissions as { resource: string; action: string; field?: string | null }[] | null) ?? []).map((r) => ({
-          resource: r.resource,
-          action: r.action,
-          field: r.field ?? undefined,
-        })),
-      );
+      setPermissions((row.permissions as RolePermissions | null) ?? {});
       setLoading(false);
     })();
     return () => {
@@ -124,32 +175,41 @@ export default function RoleForm({ model, mode, id, fields, onDone, models }: Mo
   }
 
   function toggleGlobal(checked: boolean) {
-    setTargets(checked ? [{ resource: '*', action: '*', field: '*' }] : []);
+    setPermissions(checked ? { '*': { '*': { fields: '*' } } } : {});
   }
 
   function toggleResource(resource: string, checked: boolean) {
-    setTargets((prev) => {
-      const rest = prev.filter((t) => t.resource !== resource);
-      return checked ? [...rest, { resource, action: '*', field: '*' }] : rest;
+    setPermissions((prev) => {
+      const { [resource]: _drop, ...rest } = prev;
+      return checked ? { ...rest, [resource]: { '*': { fields: '*' } } } : rest;
     });
   }
 
   function toggleAction(resource: string, action: string, fieldShaped: boolean, allFieldKeys: string[], checked: boolean) {
-    setTargets((prev) => {
+    setPermissions((prev) => {
       if (!fieldShaped) {
-        const rest = prev.filter((t) => !(t.resource === resource && t.action === action));
-        return checked ? [...rest, { resource, action }] : rest;
+        const actionMap = prev[resource] ?? {};
+        const { [action]: _drop, ...restActions } = actionMap;
+        return setResourceActions(prev, resource, checked ? { ...restActions, [action]: {} } : restActions);
       }
       return replaceActionFields(prev, resource, action, checked ? allFieldKeys : [], allFieldKeys);
     });
   }
 
   function toggleField(resource: string, action: string, field: string, allFieldKeys: string[], checked: boolean) {
-    setTargets((prev) => {
+    setPermissions((prev) => {
       const current = new Set(grantedFieldKeys(prev, resource, action, allFieldKeys));
       if (checked) current.add(field);
       else current.delete(field);
       return replaceActionFields(prev, resource, action, [...current], allFieldKeys);
+    });
+  }
+
+  function setScope(resource: string, action: string, scope: 'own' | 'any') {
+    setPermissions((prev) => {
+      const actionMap = prev[resource] ?? {};
+      const grant = actionMap[action] ?? {};
+      return setResourceActions(prev, resource, { ...actionMap, [action]: { ...grant, scope } });
     });
   }
 
@@ -158,9 +218,9 @@ export default function RoleForm({ model, mode, id, fields, onDone, models }: Mo
     setError(null);
     try {
       if (mode === 'create') {
-        await createRow(model.name, { ...values, permissions: targets });
+        await createRow(model.name, { ...values, permissions });
       } else {
-        await updateRow(model.name, id!, { ...values, permissions: targets });
+        await updateRow(model.name, id!, { ...values, permissions });
       }
       onDone();
     } catch (err) {
@@ -172,7 +232,7 @@ export default function RoleForm({ model, mode, id, fields, onDone, models }: Mo
 
   if (loading) return <p className="text-sm text-gray-500">Loading…</p>;
 
-  const globalGranted = isGlobalGranted(targets);
+  const globalGranted = isGlobalGranted(permissions);
 
   return (
     <div className="space-y-4">
@@ -202,7 +262,7 @@ export default function RoleForm({ model, mode, id, fields, onDone, models }: Mo
 
         <ul className="mt-2 space-y-1 pl-5">
           {models.map((resource) => {
-            const resourceGranted = isResourceGranted(targets, resource.name);
+            const resourceGranted = isResourceGranted(permissions, resource.name);
             const actions = [
               { name: 'read', label: 'Read', fieldShaped: true },
               { name: 'create', label: 'Create', fieldShaped: true },
@@ -225,16 +285,22 @@ export default function RoleForm({ model, mode, id, fields, onDone, models }: Mo
 
                 <ul className="mt-1 space-y-1 pl-5">
                   {actions.map((action) => {
-                    const state = actionState(targets, resource.name, action.name, action.fieldShaped, allFieldKeys);
+                    const state = actionState(permissions, resource.name, action.name, action.fieldShaped, allFieldKeys);
+                    const actionDisabled = globalGranted || resourceGranted;
                     return (
                       <li key={action.name}>
                         <label className="flex items-center gap-2 text-sm text-gray-700">
                           <TriCheckbox
                             state={state}
-                            disabled={globalGranted || resourceGranted}
+                            disabled={actionDisabled}
                             onChange={(checked) => toggleAction(resource.name, action.name, action.fieldShaped, allFieldKeys, checked)}
                           />
                           {action.label}
+                          <ScopeToggle
+                            scope={actionScope(permissions, resource.name, action.name)}
+                            disabled={actionDisabled || state === 'unchecked'}
+                            onChange={(scope) => setScope(resource.name, action.name, scope)}
+                          />
                         </label>
 
                         {action.fieldShaped && allFieldKeys.length > 0 && (
@@ -246,11 +312,11 @@ export default function RoleForm({ model, mode, id, fields, onDone, models }: Mo
                                   <label className="flex items-center gap-2 text-xs text-gray-600">
                                     <TriCheckbox
                                       state={
-                                        grantedFieldKeys(targets, resource.name, action.name, allFieldKeys).includes(f.key)
+                                        grantedFieldKeys(permissions, resource.name, action.name, allFieldKeys).includes(f.key)
                                           ? 'checked'
                                           : 'unchecked'
                                       }
-                                      disabled={globalGranted || resourceGranted}
+                                      disabled={actionDisabled}
                                       onChange={(checked) => toggleField(resource.name, action.name, f.key, allFieldKeys, checked)}
                                     />
                                     {f.label}

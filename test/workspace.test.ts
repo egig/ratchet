@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import type { AnyDb } from '../src/core/db.js';
 import { connectTestDb } from './helpers/db.js';
 import type { CustomOperationDefinition, OperationContext } from '../src/core/index.js';
+import { assertOwnsRow } from '../src/core/index.js';
 import { generateId } from '../src/core/id.js';
 import { insertRow } from '../src/core/persistence.js';
 import { Role } from '../src/auth/models/role.model.js';
@@ -176,13 +177,13 @@ describeIfDb('Workspace lock/unlock (custom operations, src/workspace/models/wor
         chat_enabled boolean NOT NULL DEFAULT true
       )`);
     // `presetFields` (inside `lock`/`unlock`) checks the caller's *field* grant on `update` via
-    // `resolveGrantedFields` — a real DB lookup by `roleId`, independent of `requireOwnsRow`'s own
-    // ownership check — so this suite needs a `roles` fixture too, shared with
+    // `resolveGrantedFields` — a real DB lookup by `roleId`, independent of the router-level
+    // ownership check (`assertOwnsRow`) — so this suite needs a `roles` fixture too, shared with
     // `auth.test.ts`/`router.test.ts`'s own copy the same idempotent way `workspaces` already is.
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS roles (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '[]'
+        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '{}'
       )`);
   });
 
@@ -207,7 +208,7 @@ describeIfDb('Workspace lock/unlock (custom operations, src/workspace/models/wor
     const now = new Date().toISOString();
     await db.execute(
       sql`INSERT INTO roles (id, created_at, updated_at, name, permissions)
-          VALUES (${roleId}, ${now}, ${now}, ${`role-${roleId}`}, ${JSON.stringify([{ resource: 'workspaces', action: 'update', field: 'locked' }])})`,
+          VALUES (${roleId}, ${now}, ${now}, ${`role-${roleId}`}, ${JSON.stringify({ workspaces: { update: { fields: ['locked'] } } })})`,
     );
     return roleId;
   }
@@ -243,7 +244,10 @@ describeIfDb('Workspace lock/unlock (custom operations, src/workspace/models/wor
     const otherId = generateId();
     const workspace = await insertRow(db, Workspace, { userId: ownerId, name: 'Mine' });
 
-    await expect(operationPipeline('lock')(opCtx('lock', workspace.id as string, otherId, null))).rejects.toMatchObject({
+    // Ownership is now checked by the router (`assertOwnsRow`, core/pipeline.ts) before a custom
+    // operation's own pipeline ever runs, not by a step composed into `lock`'s own pipeline — so
+    // this exercises that same call directly, the way `create-router.ts`'s custom-op route does.
+    await expect(assertOwnsRow(db, Workspace, workspace.id as string, otherId)).rejects.toMatchObject({
       code: 'NOT_FOUND',
       status: 404,
     });
@@ -296,7 +300,7 @@ describeIfDb('createDefaultWorkspace (src/workspace/provisioning.ts, against a l
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS roles (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '[]'
+        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '{}'
       )`);
   });
 

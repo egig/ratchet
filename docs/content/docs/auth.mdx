@@ -3,7 +3,7 @@ title: Auth
 description: Session-based auth, root admin onboarding, and roles/permissions.
 ---
 
-`ratchet/auth` provides session-based authentication (`User`, `Role`, `Session` models, plus a router and pipeline helpers) that `ratchet serve` mounts at `/api/auth`, ahead of the generic `/api/:model` router. A role's entire grant list lives on the `Role.permissions` json column — there is no separate `Permission` model.
+`ratchet/auth` provides session-based authentication (`User`, `Role`, `Session` models, plus a router and pipeline helpers) that `ratchet serve` mounts at `/api/auth`, ahead of the generic `/api/:model` router. A role's entire grant tree lives on the `Role.permissions` json column — there is no separate `Permission` model.
 
 ## Endpoints
 
@@ -23,7 +23,7 @@ description: Session-based auth, root admin onboarding, and roles/permissions.
 
 ## Root admin onboarding
 
-A fresh instance has no users, so `requirePermission` would lock everyone out with no way to grant the first permission. `POST /api/auth/setup` closes that gap: it's unauthenticated, but only works once — it checks whether any user already holds a `*:*` permission entry (on their role's `permissions` list) and 409s (`SETUP_ALREADY_COMPLETE`) if so. Otherwise it creates (or reuses) a `Root` role with a `{resource: '*', action: '*', field: '*'}` permission entry, creates the submitted user under that role, and signs them in — the same shape as `register`/`login`.
+A fresh instance has no users, so `requirePermission` would lock everyone out with no way to grant the first permission. `POST /api/auth/setup` closes that gap: it's unauthenticated, but only works once — it checks whether any user already holds a `*:*` permission (`permissions['*']['*']`) and 409s (`SETUP_ALREADY_COMPLETE`) if so. Otherwise it creates (or reuses) a `Root` role with `permissions: { '*': { '*': { fields: '*', scope: 'any' } } }`, creates the submitted user under that role, and signs them in — the same shape as `register`/`login`.
 
 The same request also provisions the framework's first built-in `Agent`, named `Ratchet`, with `roleId` set to that same `Root` role — so it can call every tool from turn one (see "Agents derive their tools from a `Role`" below). `Agent.providerId` starts out `null`: connecting a Model Provider is a separate step, done from the chat UI's empty-state (or the Providers admin screen) once you're logged in, not part of this form.
 
@@ -68,23 +68,38 @@ export const Announcement = defineModel('announcements', {
 
 ## Roles and permissions
 
-`Role` is an ordinary model whose entire grant list is the `permissions` json column — `Role.permissions` is `[{ resource, action, field? }, ...]`, and there's no separate `Permission` model or junction table to manage. Grant a role permissions by setting `permissions` to the desired array, using `'*'` for `resource`/`action` to grant broadly and `'*'` for `field` to grant every field. A role's grants are edited through the generic REST API (a `POST /api/roles` create or `PATCH /api/roles/:id` update carrying the whole `permissions` array) or through the console form (see below) — replacing the entire array in one call, the same way you'd replace an array field on any model.
+`Role` is an ordinary model whose entire grant tree is the `permissions` json column — `Role.permissions` is `{ [resource]: { [action]: { fields?, scope? } } }`, and there's no separate `Permission` model or junction table to manage. Either key may be `'*'` (every resource, or every action on a resource) — but a `'*'` key never coexists with a sibling specific key at the same level: a resource/action grouping is either fully wildcard or fully enumerated, never a mix of both, so the most-specific-match lookup never has to merge two sources of truth. A role's grants are edited through the generic REST API (a `POST /api/roles` create or `PATCH /api/roles/:id` update carrying the whole `permissions` tree) or through the console form (see below) — replacing the entire tree in one call, the same way you'd replace a JSON field on any model.
 
-`Role`'s console form (`src/auth/models/role.form.tsx`, shipped with the framework — a real, worked example of a [builtin console form](/docs/console#builtin-forms)) edits `name`/`description` the normal way and, in the same form/submit, manages the role's entire `permissions` array via a tree of resource/action/field checkboxes where `'*'` collapses a fully-granted subtree into one wildcard entry. It persists with a plain `POST`/`PATCH /api/roles`, so it's gated the same "two independent checks" way any role edit is: the `roles:create`/`roles:update` grant from the requesting user's own role, plus the field grants covering the fields being written.
+```ts
+// an "Editor" role: full read access to every document, but can only update/delete
+// its own — update/remove omit `scope`, so they default to `'own'`
+{
+  documents: {
+    read: { fields: '*', scope: 'any' },
+    update: { fields: ['title', 'body'] },
+    remove: {},
+  },
+}
+```
 
-> **Agents derive their tools from a `Role`.** An `Agent` carries a `roleId`, and the tools it may call (`resolveAgentTools`, `src/automation/tool.ts`) are exactly the operations its role's `permissions` grant — so an agent's capabilities are just a role assignment, no separate grant list. A `read` grant yields two builtin read tools per resource, `list_<model>` (filter/sort/offset-pagination, returns `{ data, meta }`) and `findOne_<model>` (one row by id); `create`/`update`/`remove` and custom operations map to a tool each as before. When an agent tool is invoked, the call is additionally gated by the *chatting user's* own role (not the agent's alone) — including the same `read` field grant that scopes a REST response's columns and its `?include=`d relations — so an agent can never read or write more than the human driving it already could over `/api/:model`.
+`Role`'s console form (`src/auth/models/role.form.tsx`, shipped with the framework — a real, worked example of a [builtin console form](/docs/console#builtin-forms)) edits `name`/`description` the normal way and, in the same form/submit, manages the role's entire `permissions` tree via nested resource/action/field checkboxes (plus an own/any control on a resource with an owner field) where `'*'` collapses a fully-granted subtree into one wildcard key. It persists with a plain `POST`/`PATCH /api/roles`, so it's gated the same "two independent checks" way any role edit is: the `roles:create`/`roles:update` grant from the requesting user's own role, plus the field grants covering the fields being written.
+
+> **Agents derive their tools from a `Role`.** An `Agent` carries a `roleId`, and the tools it may call (`resolveAgentTools`, `src/automation/tool.ts`) are exactly the operations its role's `permissions` grant — so an agent's capabilities are just a role assignment, no separate grant list. A `read` grant yields two builtin read tools per resource, `list_<model>` (filter/sort/offset-pagination, returns `{ data, meta }`) and `findOne_<model>` (one row by id); `create`/`update`/`remove` and custom operations map to a tool each as before. When an agent tool is invoked, the call is additionally gated by the *chatting user's* own role (not the agent's alone) — including the same `read` field grant that scopes a REST response's columns and its `?include=`d relations, and the same `scope` — so an agent can never read or write more than the human driving it already could over `/api/:model`.
 
 ## Field-level permission
 
-`field` names one field of `resource` a role may read (`action: 'read'`) or write (`action: 'create'`/`'update'`) — or `'*'` for every field. It's required on a `read`/`create`/`update`/`'*'` entry and doesn't apply at all to `remove` (which gates a whole row, never individual fields). Each grant is one element of `Role.permissions`:
+`fields` names which fields of `resource` a role may read (`action: 'read'`) or write (`action: 'create'`/`'update'`) — `'*'` for every field, or an array of specific field names. It's required on a `read`/`create`/`update`/`'*'` entry and doesn't apply at all to `remove` (which gates a whole row, never individual fields):
 
-```
-{ resource: 'invoices', action: 'read', field: 'total' }
-{ resource: 'invoices', action: 'read', field: 'customerNotes' }
-{ resource: 'invoices', action: 'update', field: '*' }
+```ts
+{
+  invoices: {
+    read: { fields: ['total', 'customerNotes'] },
+    update: { fields: '*' },
+  },
+}
 ```
 
-This is **secure-by-default, with no implicit "all fields"**: a role with a `(resource, action)` grant but no matching `field` grant gets zero fields for that action, not every field. A read that field permission denies simply omits that key from the response (the same shape `sensitive: true` fields already get); a write that touches a denied field is rejected outright, naming every offending key, rather than silently dropping it. `?filter=`/`?sort=` on a field a role can't read is rejected the same way — otherwise field-read denial would be a trivial oracle to route around.
+This is **secure-by-default, with no implicit "all fields"**: a role with a `(resource, action)` grant but no `fields` gets zero fields for that action, not every field. A read that field permission denies simply omits that key from the response (the same shape `sensitive: true` fields already get); a write that touches a denied field is rejected outright, naming every offending key, rather than silently dropping it. `?filter=`/`?sort=` on a field a role can't read is rejected the same way — otherwise field-read denial would be a trivial oracle to route around.
 
 Two things are always exempt from field-level permission, for every role:
 
@@ -93,6 +108,16 @@ Two things are always exempt from field-level permission, for every role:
 
 `?include=`d relations are filtered by the same field grant, using the requesting role's `read` permission on the *related* model — embedding a row via `?include=` can't be used to see fields that model's own permission denies.
 
+## Row-level scope: own vs. any
+
+**Every model has an owner.** By default it's the auto-injected `createdById` system column, which `persistWrite` already force-sets from the requester's id on every insert, for every model, unconditionally — so ownership scoping works out of the box, with no per-model opt-in. A model overrides which field counts as the owner with `api: { ownerField: 'userId' }` (see [Models](/docs/models)) only when the real owner differs from whoever created the row — e.g. `Workspace`'s `userId`, since a self-registered user's default workspace is provisioned with no session at all, so `createdById` would be null there.
+
+`scope` on a grant node controls whether that role sees/writes every row (`'any'`) or only rows it owns (`'own'`) — omitted defaults to `'own'`. Because every model has an owner, **this default applies everywhere**: a role that doesn't mention `scope` at all is restricted to rows it created, on every resource, unless it explicitly grants `scope: 'any'`. `scope` is valid on any resource, including under the `'*'` resource key.
+
+Ownership is entirely role-driven, not baked into a model's pipeline — `create-router.ts` and `automation/tool.ts`'s agent-tool executor both resolve the caller's `scope` for the action being invoked and enforce it automatically (`core/pipeline.ts`'s `ownerFieldOf`/`forceOwnerOnCreate`/`assertOwnsRow`) before a model's own pipeline ever runs. `create` always force-sets the owner to the requester regardless of `scope` — there's no "create on someone else's behalf" capability. A model author never wires an ownership check by hand.
+
+> An "admin" role that should see everything on a resource needs `scope: 'any'` there explicitly — e.g. `{ roles: { update: { fields: '*', scope: 'any' } } }` to let a role manage *any* `Role` row, not just ones it created itself.
+
 ### Bootstrapping
 
-Because there's no implicit "all fields," the Root role `POST /api/auth/setup` creates a `{ resource: '*', action: '*', field: '*' }` entry in `permissions` — the `'*'` on `field` is what keeps the freshly-created admin able to see/edit anything immediately, the same way `'*'` on `resource`/`action` already did. When granting a narrower role by hand, remember `field` needs its own entry (or `'*'`) for `read`/`create`/`update` — a grant that only sets `resource`/`action` and leaves `field` unset is rejected by `requireValidPermissionTarget`, not silently treated as "everything."
+Because there's no implicit "all fields," and because every model now defaults to `scope: 'own'`, the Root role `POST /api/auth/setup` creates `permissions: { '*': { '*': { fields: '*', scope: 'any' } } }` — `fields: '*'` and `scope: 'any'` are both what keep the freshly-created admin able to see/edit *anything* immediately (not just rows it happens to have created itself), the same way the `'*'` resource/action keys already do. When granting a narrower role by hand, remember `fields` needs its own entry (or `'*'`) for `read`/`create`/`update` — a grant that only sets `resource`/`action` and leaves `fields` unset is rejected by `validateRolePermissions`, not silently treated as "everything" — and remember `scope: 'any'` if the role should manage more than just what it personally creates.
