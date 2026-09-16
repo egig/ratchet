@@ -100,12 +100,12 @@ describeIfDb('auth system (against a live Postgres)', () => {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS roles (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        name varchar NOT NULL, description text, permissions jsonb NOT NULL DEFAULT '[]'
+        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '[]'
       )`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS users (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        email varchar NOT NULL, password_hash varchar NOT NULL, role_id uuid, work_title_id uuid, active boolean NOT NULL DEFAULT true
+        email varchar NOT NULL, password_hash varchar NOT NULL, role_id uuid, active boolean NOT NULL DEFAULT true
       )`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS sessions (
@@ -139,8 +139,8 @@ describeIfDb('auth system (against a live Postgres)', () => {
       )`);
     // register/setup/admin-created-user all provision a default `Workspace` (see
     // `workspace/provisioning.ts`'s `createDefaultWorkspace`) — needed for those flows to work,
-    // even though this suite otherwise has nothing to do with the workspace domain. No
-    // `work_title_id` is ever set here, so `workspace_views`/`work_titles` are never touched. Never
+    // even though this suite otherwise has nothing to do with the workspace domain. No role here
+    // ever sets `workspace_template_id`, so `workspace_views` is never touched. Never
     // truncated/dropped below: `workspace.test.ts` also writes to `workspaces` and runs
     // concurrently — vitest parallelizes test files against the same live DB — so this suite only
     // creates it and otherwise leaves it alone; every assertion here is scoped to its own user's
@@ -321,7 +321,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     expect(typeof token).toBe('string');
   });
 
-  it('register also provisions a blank default Workspace (workspace/provisioning.ts) — a fresh account has no workTitleId yet', async () => {
+  it('register also provisions a blank default Workspace (workspace/provisioning.ts) — a fresh account has no roleId yet', async () => {
     const { user } = await registerUser('workspace-on-register@example.com', 'hunter2');
 
     const rows = (await db.execute(

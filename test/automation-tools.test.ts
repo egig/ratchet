@@ -37,7 +37,7 @@ describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS roles (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        name varchar NOT NULL, description text, permissions jsonb NOT NULL DEFAULT '[]'
+        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '[]'
       )`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS users (

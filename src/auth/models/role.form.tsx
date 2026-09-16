@@ -104,7 +104,7 @@ export default function RoleForm({ model, mode, id, fields, onDone, models }: Mo
     void (async () => {
       const row = await getRow(model.name, id);
       if (cancelled) return;
-      setValues({ name: row.name, description: row.description });
+      setValues({ name: row.name, description: row.description, workspaceTemplateId: row.workspaceTemplateId });
       setTargets(
         ((row.permissions as { resource: string; action: string; field?: string | null }[] | null) ?? []).map((r) => ({
           resource: r.resource,
@@ -186,6 +186,10 @@ export default function RoleForm({ model, mode, id, fields, onDone, models }: Mo
       <label className="block text-sm">
         <span className="mb-1 block text-gray-700">{fields.description!.meta.label}</span>
         {fields.description!.render({ value: values.description, onChange: onFieldChange })}
+      </label>
+      <label className="block text-sm">
+        <span className="mb-1 block text-gray-700">{fields.workspaceTemplateId!.meta.label}</span>
+        {fields.workspaceTemplateId!.render({ value: values.workspaceTemplateId, onChange: onFieldChange })}
       </label>
 
       <fieldset className="rounded border border-gray-200 p-3">

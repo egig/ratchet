@@ -21,8 +21,7 @@ export const User = defineModel('users', {
  * No auth guard — this is what `POST /api/auth/register` (src/auth/router.ts) runs, so public
  * self-signup isn't blocked by the `users:create` permission that gates admin-driven creation
  * through `User.operations.create` above. `createDefaultWorkspace` still runs last (see
- * `workspace/provisioning.ts`) — a self-registered user has no `workTitleId` (the inverse FK of
- * `WorkTitle`'s `users` referenceToMany) yet, so this always
- * provisions the blank default workspace, not a work-title template.
+ * `workspace/provisioning.ts`) — a self-registered user has no `roleId` yet, so this always
+ * provisions a blank default workspace, not a role template.
  */
 export const registerPipeline = pipe(hashPassword, validate, persist, createDefaultWorkspace);

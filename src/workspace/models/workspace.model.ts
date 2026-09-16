@@ -3,7 +3,7 @@ import { presetFields } from '../../auth/pipeline.js';
 
 /** Blocks writes to a `locked` workspace — its structure (its own fields, and via
  * `requireWorkspaceOwnership` in workspace/pipeline.ts, its `WorkspaceView` tabs) is frozen, e.g. so
- * a `WorkTitle`-provisioned workspace can be handed to someone who should only work with the data
+ * a `Role`-provisioned workspace can be handed to someone who should only work with the data
  * inside it (see workspace-view.model.ts). No carve-out needed for `locked` itself anymore — see
  * `forbidLockedInUpdate` below, `locked` never reaches `update` in the first place, so unlocking a
  * locked row (via the `unlock` operation) never has to pass through this check at all. Must run

@@ -18,6 +18,16 @@ export const Role = defineModel('roles', {
   fields: {
     name: field.string({ required: true, unique: true, indexed: true, maxLength: 100 }),
     description: field.text({ required: false }),
+    // The `Workspace` (workspace/models/workspace.model.ts) a new `User` assigned this role is
+    // provisioned from — its `WorkspaceView` tabs get cloned onto the user's own workspace by
+    // `workspace/provisioning.ts`'s `createDefaultWorkspace`. Optional: a role that exists purely
+    // for permissions (e.g. an API-only role) doesn't need one, and `createDefaultWorkspace` falls
+    // back to a blank workspace when it's unset.
+    workspaceTemplateId: field.reference('workspaces', {
+      required: false,
+      indexed: true,
+      displayText: 'Default Workspace',
+    }),
     // The role's entire grant list — one JSON column instead of a `Permission` junction table
     // (docs/guide/auth.md). NOT `required: true` — `field.ts`'s `assertNoRequiredDefaultConflict`
     // forbids `required` + `default` together, and a `default: []` column is never absent; every

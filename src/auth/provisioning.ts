@@ -49,10 +49,9 @@ export async function provisionRootAdmin(db: AnyDb, params: { email: string; pas
     }
 
     const user = await insertRow(tx, User, { email: params.email, passwordHash: await hashPassword(params.password), roleId: role.id });
-    // root admin has no workTitleId (the inverse FK of WorkTitle's `users` referenceToMany; there's
-    // no WorkTitle yet on a fresh instance), so this is always the blank default — see
-    // `workspace/provisioning.ts`'s `createDefaultWorkspace`, which this mirrors for the one
-    // user-creation path that doesn't run through a pipe().
+    // the freshly-created `Root` role above has no workspaceTemplateId yet, so this is always the
+    // blank default — see `workspace/provisioning.ts`'s `createDefaultWorkspace`, which this
+    // mirrors for the one user-creation path that doesn't run through a pipe().
     await insertRow(tx, Workspace, { userId: user.id, name: DEFAULT_WORKSPACE_NAME });
     await insertRow(tx, Agent, { name: RATCHET_AGENT_NAME, systemPrompt: RATCHET_SYSTEM_PROMPT, providerId: null, roleId: role.id });
 

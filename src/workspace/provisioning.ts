@@ -1,14 +1,13 @@
 import type { PipelineFn } from '../core/pipeline.js';
 import { fetchRow, insertRow, listRowsByField } from '../core/persistence.js';
-import { WorkTitle } from './models/work-title.model.js';
+import { Role } from '../auth/models/role.model.js';
 import { Workspace } from './models/workspace.model.js';
 import { WorkspaceView } from './models/workspace-view.model.js';
 
-/** Name given to the `Workspace` every new `User` with no `workTitleId` (the inverse FK of
- * `WorkTitle`'s `users` referenceToMany) is provisioned with — see
- * `createDefaultWorkspace` below. Kept in its own module (not `pipeline.ts`) because
- * `workspace-view.model.ts` already imports `pipeline.ts` for `requireWorkspaceOwnership` —
- * importing `WorkspaceView` back into `pipeline.ts` would make that a real import cycle. */
+/** Name given to every newly-provisioned `Workspace` — see `createDefaultWorkspace` below. Kept
+ * in its own module (not `pipeline.ts`) because `workspace-view.model.ts` already imports
+ * `pipeline.ts` for `requireWorkspaceOwnership` — importing `WorkspaceView` back into
+ * `pipeline.ts` would make that a real import cycle. */
 export const DEFAULT_WORKSPACE_NAME = 'My Workspace';
 
 /** Copies every `WorkspaceView` under `templateWorkspaceId` into `targetWorkspaceId`, owned by
@@ -51,28 +50,24 @@ async function cloneWorkspaceViews(
  * `persist`, the pipeline's write boundary — core/pipeline.ts), so a failure here can't roll back
  * the user creation itself, and non-transactionally, so it can't be folded into the same insert.
  *
-  * When the new user has a `workTitleId` (the inverse FK of `WorkTitle`'s `users` referenceToMany —
- * `workspace/models/work-title.model.ts`, every `WorkTitle` mandates a `workspaceTemplateId`), the
- * provisioned `Workspace` is a clone of that template's tabs rather than a blank one, so the user
- * lands on a view suited to their role. `workTitleId` is optional (e.g. a self-registered account
- * has none yet), so the blank fallback stays the common case for `/register`.
+ * When the new user has a `roleId` (`auth/models/user.model.ts`) whose `Role` names a
+ * `workspaceTemplateId` (`auth/models/role.model.ts`), that template's `WorkspaceView` tabs are
+ * cloned onto the new workspace, so the user lands on a view suited to their role. Both are
+ * optional (e.g. a self-registered account has no `roleId` yet, and a permissions-only role may
+ * have no template), so a blank workspace stays the common case for `/register`. The workspace is
+ * always named `DEFAULT_WORKSPACE_NAME` regardless of role.
  */
 export const createDefaultWorkspace: PipelineFn = async (ctx) => {
   const userId = ctx.doc?.id;
   if (typeof userId !== 'string') return ctx;
 
-  const workTitleId = ctx.doc?.workTitleId;
-  const workTitle = typeof workTitleId === 'string' ? await fetchRow(ctx.db, WorkTitle, workTitleId) : null;
+  const roleId = ctx.doc?.roleId;
+  const role = typeof roleId === 'string' ? await fetchRow(ctx.db, Role, roleId) : null;
 
-  const workspace = await insertRow(
-    ctx.db,
-    Workspace,
-    { userId, name: typeof workTitle?.name === 'string' ? workTitle.name : DEFAULT_WORKSPACE_NAME },
-    userId,
-  );
+  const workspace = await insertRow(ctx.db, Workspace, { userId, name: DEFAULT_WORKSPACE_NAME }, userId);
 
-  if (typeof workTitle?.workspaceTemplateId === 'string') {
-    await cloneWorkspaceViews(ctx, workTitle.workspaceTemplateId, workspace.id as string, userId);
+  if (typeof role?.workspaceTemplateId === 'string') {
+    await cloneWorkspaceViews(ctx, role.workspaceTemplateId, workspace.id as string, userId);
   }
 
   return ctx;

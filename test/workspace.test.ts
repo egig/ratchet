@@ -6,7 +6,7 @@ import { connectTestDb } from './helpers/db.js';
 import type { CustomOperationDefinition, OperationContext } from '../src/core/index.js';
 import { generateId } from '../src/core/id.js';
 import { insertRow } from '../src/core/persistence.js';
-import { WorkTitle } from '../src/workspace/models/work-title.model.js';
+import { Role } from '../src/auth/models/role.model.js';
 import { Workspace, WorkspaceView, requireNotLocked, forbidLockedInUpdate } from '../src/workspace/models/index.js';
 import { assertOwnsWorkspace, requireWorkspaceOwnership } from '../src/workspace/pipeline.js';
 import { createDefaultWorkspace, DEFAULT_WORKSPACE_NAME } from '../src/workspace/provisioning.js';
@@ -182,7 +182,7 @@ describeIfDb('Workspace lock/unlock (custom operations, src/workspace/models/wor
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS roles (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        name varchar NOT NULL, description text, permissions jsonb NOT NULL DEFAULT '[]'
+        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '[]'
       )`);
   });
 
@@ -277,7 +277,9 @@ describeIfDb('createDefaultWorkspace (src/workspace/provisioning.ts, against a l
     ({ db, client } = connectTestDb(connectionString!));
     // `workspaces`/`workspace_views` are shared with `auth.test.ts` and the
     // `requireWorkspaceOwnership` suite above (see that suite's note) — not truncated/dropped
-    // here either. `work_titles` is exclusive to this file, so it's safe to reset between tests.
+    // here either. `roles` is shared with `auth.test.ts` too (same DDL shape, including
+    // `workspace_template_id`), so it's also left alone between tests; only rows this suite
+    // itself inserts are ever read back.
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS workspaces (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
@@ -292,32 +294,27 @@ describeIfDb('createDefaultWorkspace (src/workspace/provisioning.ts, against a l
         "limit" integer NOT NULL DEFAULT 20, "order" integer NOT NULL DEFAULT 0
       )`);
     await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS work_titles (
+      CREATE TABLE IF NOT EXISTS roles (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        name varchar NOT NULL, rank integer NOT NULL, workspace_template_id uuid NOT NULL
+        name varchar NOT NULL, description text, workspace_template_id uuid, permissions jsonb NOT NULL DEFAULT '[]'
       )`);
   });
 
-  beforeEach(async () => {
-    await db.execute(sql`TRUNCATE TABLE work_titles`);
-  });
-
   afterAll(async () => {
-    await db.execute(sql`DROP TABLE IF EXISTS work_titles`);
     await client.end();
   });
 
-  function ctxForNewUser(userId: string, workTitleId?: string): OperationContext {
+  function ctxForNewUser(userId: string, roleId?: string): OperationContext {
     return {
       operation: 'create',
       input: {},
-      doc: workTitleId ? { id: userId, workTitleId } : { id: userId },
+      doc: roleId ? { id: userId, roleId } : { id: userId },
       model: Workspace,
       db,
     };
   }
 
-  it('provisions a blank "My Workspace" for a user with no workTitleId', async () => {
+  it('provisions a blank "My Workspace" for a user with no roleId', async () => {
     const userId = generateId();
     await createDefaultWorkspace(ctxForNewUser(userId));
 
@@ -325,7 +322,7 @@ describeIfDb('createDefaultWorkspace (src/workspace/provisioning.ts, against a l
     expect(workspaces).toEqual([{ name: DEFAULT_WORKSPACE_NAME, user_id: userId }]);
   });
 
-  it("clones the work title's template workspace tabs into a new workspace owned by the user", async () => {
+  it("clones the role's template workspace tabs into a new workspace owned by the user, and still names it \"My Workspace\"", async () => {
     const templateOwnerId = generateId();
     const template = await insertRow(db, Workspace, { userId: templateOwnerId, name: 'Sales Template' });
     await insertRow(db, WorkspaceView, {
@@ -344,16 +341,16 @@ describeIfDb('createDefaultWorkspace (src/workspace/provisioning.ts, against a l
       label: 'Pipeline',
       order: 1,
     });
-    const workTitle = await insertRow(db, WorkTitle, { name: 'Sales Rep', rank: 2, workspaceTemplateId: template.id });
+    const role = await insertRow(db, Role, { name: 'Sales Rep', workspaceTemplateId: template.id });
 
     const newUserId = generateId();
-    await createDefaultWorkspace(ctxForNewUser(newUserId, workTitle.id as string));
+    await createDefaultWorkspace(ctxForNewUser(newUserId, role.id as string));
 
     const workspaces = (await db.execute(
       sql`SELECT id, name FROM workspaces WHERE user_id = ${newUserId}`,
     )) as unknown as { id: string; name: string }[];
     expect(workspaces).toHaveLength(1);
-    expect(workspaces[0]!.name).toBe('Sales Rep');
+    expect(workspaces[0]!.name).toBe(DEFAULT_WORKSPACE_NAME);
 
     const views = (await db.execute(
       sql`SELECT target_model, label, user_id, workspace_id FROM workspace_views WHERE workspace_id = ${workspaces[0]!.id} ORDER BY "order"`,
