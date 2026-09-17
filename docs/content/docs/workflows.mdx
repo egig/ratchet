@@ -1,0 +1,72 @@
+---
+title: Model workflows
+description: Build durable model automations with React Flow and Inngest.
+---
+
+Workflows live in **Console → Automation → Workflows**. Connect model events, record queries, model operations, conditions, and parallel **For each** steps. Workflow definitions live in Ratchet's database; Inngest executes durable steps and retries.
+
+## Enable workflows
+
+Install/update Ratchet, regenerate your application, review the generated migrations, and apply them using `ratchet migrate`. Generation adds `workflows`, `workflow_versions`, `workflow_runs`, `workflow_steps`, and `workflow_outbox`.
+
+```ts
+export default defineConfig({
+  db: { driver: 'sqlite', url: 'file:./local.db' },
+  workflows: {
+    adapter: 'inngest',
+    appId: 'my-ratchet-app',
+    limits: { items: 100, concurrency: 5, chainDepth: 10 },
+  },
+});
+```
+
+Set `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` in the server environment. Register your application's `/api/workflows/inngest` endpoint with Inngest. The endpoint supports GET, POST, and PUT; the SDK verifies execution requests. Do not enable development mode in production.
+
+The registered outbox function runs every minute. It delivers pending runs with stable event IDs. A model mutation and its pending run commit together: rollback creates no run, and a request crash after commit leaves recoverable work. Normal dispatch latency can be up to one minute. Ensure Inngest can reach the endpoint and that the outbox function is registered.
+
+For local development, set `isDev: true` and optionally `baseUrl: 'http://127.0.0.1:8288'`, then run the Inngest dev server with your application endpoint:
+
+```sh
+npx inngest-cli@latest dev -u http://localhost:3000/api/workflows/inngest
+```
+
+`ratchet serve` reads the workflow configuration. `ratchet build` includes the application ID and limits; production credentials and the optional endpoint override come from environment variables. A manually assembled `createRatchetApp` must receive the same `workflows` option. The adapter uses a Fetch-compatible handler; deployment-specific Vercel/Cloudflare accounts still require their own registration and smoke test.
+
+## Author and publish
+
+Create a workflow, select an automation role, choose a model event, and add steps. Click an output handle and then an input handle (or drag between them) to connect steps. Select a step to configure its inputs using fixed values or fields from earlier steps. Queries support equality filters; their output contains `items` and `count`.
+
+Save retains a draft. Publish validates the graph and creates an immutable version; new events use that version, and existing runs retain theirs. Pause stops new automatic runs without cancelling already queued work. Manual runs execute real actions, including when testing a draft. Saving an automation role provisions the service identity, so drafts can be tested before publishing. Choose a record ID for a trigger that declares a model; manual execution captures its current readable data in `trigger.after`.
+
+Automatic events capture readable before/after snapshots and changed fields. A removed record is available as `trigger.before`. Read/query steps explicitly fetch current data.
+
+The first version supports forward-only graphs with one successor per output and no branch joins. For each has one connected body, edited on its own canvas. Nested loops and backward connections are rejected. Missing required inputs, unavailable source fields, incompatible field mappings, and sensitive fields are rejected on publish. Runtime validation still applies to dynamic values.
+
+## Execution identity and permissions
+
+Each workflow provisions a disabled-login service user. Its published version records the selected role and service ID. Actions use that role's **current** model and field grants and ownership scope; role changes affect subsequent work. The triggering user is audit context only. Use `scope: 'any'` explicitly when the workflow must operate across owners; otherwise ownership belongs to the service identity.
+
+Workflow management uses the `workflows` permission resource:
+
+- `read`: list workflows and inspect drafts.
+- `edit`: create workflows and save drafts.
+- `publish`: publish, pause, and activate.
+- `run`: manual execution and failed-work recovery.
+- `viewRuns`: run and step status inspection.
+- `assignRole`: change the selected execution role, additionally restricted to grants within the caller's own permissions.
+
+Management scopes also apply: an `own` grant is limited to workflows created by that user. Root administrators' wildcard grants cover these actions. Internal versions, run payloads, checkpoints, and outbox tables are not exposed through the generic CRUD API.
+
+## Parallel loops and recovery
+
+For each captures its input list and processes bounded batches concurrently. Every item retries independently. Successful items remain completed when another item fails. The loop exposes `success` and `partial` outputs, with ordered `results`, `succeeded`, and `failed` arrays. Oversized queries fail explicitly rather than silently truncating.
+
+**Retry failed work** creates a linked recovery run with the original graph and inputs. Partial recovery repairs failed iterations across recorded loops, skips completed steps, and does not replay downstream actions already executed on a partial-failure branch. It reports the recovered result separately. Failure outside a loop resumes from completed checkpoints.
+
+Database writes made through `pipe(..., persist, ...)` are checkpointed in their transaction, preventing repeated commits after a retry. Post-persist hooks retain their post-commit behavior. Custom operations and hooks that call external APIs must supply their own idempotency protection; use `ctx.effectKey` when passing an idempotency key to an external system. Arbitrary raw SQL or external side effects outside the model pipeline transaction cannot receive the same atomic guarantee.
+
+Workflow-originated writes may trigger other workflows. The event chain prevents a workflow from repeating within the same chain and has a configurable depth limit. Independent later events can trigger it again. Events cover calls to `persist`, `persist.remove`, and `persist.hardRemove` on the app's workflow-enabled database handle. External SQL and implicit relationship/junction maintenance do not generate their own child events in this version.
+
+## Moving to self-hosted Inngest
+
+Keep the same graph definitions and node handlers. Configure `baseUrl` (or `INNGEST_BASE_URL`), event/signing keys, and register the same endpoint against the self-hosted server. In-flight engine checkpoints are not automatically transferred: drain existing runs or plan a separate state migration before switching. Other engines require a new execution adapter.

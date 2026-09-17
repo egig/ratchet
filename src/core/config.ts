@@ -81,6 +81,7 @@ export function resolveDbConfig(db: DbConfig): { driver: 'postgres'; connectionS
 }
 
 export interface FrameworkConfig {
+  workflows?: import('../workflows/config.js').WorkflowConfig;
   db: DbConfig;
   /** `file` field blob backend — see `StorageConfig`. default: local fs under
    * `<generatedDir>/storage` (today's zero-config behavior), same as omitting this entirely. */

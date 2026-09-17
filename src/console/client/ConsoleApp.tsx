@@ -1,3 +1,4 @@
+import { WorkflowsPage } from './WorkflowsPage.js';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Route, Routes } from 'react-router';
 import { AuthProvider } from './auth.js';
@@ -57,6 +58,8 @@ export function ConsoleApp({ customForms, fieldInputs }: ConsoleAppProps) {
                     <Route index element={<IndexRedirect />} />
                     <Route path="settings" element={<SettingsPage />} />
                     <Route path="settings/:domain" element={<SettingsPage />} />
+                    <Route path="workflows" element={<WorkflowsPage />} />
+                    <Route path="workflows/:workflowId" element={<WorkflowsPage />} />
                     <Route path=":model/*" element={<ModelListPage />} />
                   </Route>
                 </Route>

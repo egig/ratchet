@@ -4,6 +4,6 @@
     "rootDir": "./src",
     "outDir": "dist"
   },
-  "include": ["src/core", "src/cli", "src/codegen", "src/router", "src/auth", "src/automation", "src/workspace", "src/website", "src/web", "src/console"],
+  "include": ["src/core", "src/cli", "src/codegen", "src/router", "src/auth", "src/automation", "src/workflows", "src/workspace", "src/website", "src/web", "src/console"],
   "exclude": ["dist", "node_modules", "src/.generated", "src/cli/stubs"]
 }

@@ -262,7 +262,7 @@ export async function buildConsoleClient(dirs: Dirs, options: BuildConsoleClient
  * The entry is trivial — it hands the generated `.ratchet/app.ts` bundle and the console asset
  * source to `createRatchetApp` (`@egig/ratchet/server`), which owns the route-mounting sequence —
  * then boots `serveNode`. Does NOT change `ratchet serve`/`ratchet dev`'s runtime behavior. */
-export async function buildServerBundle(cwd: string, dirs: Dirs, dbConfig: DbConfig): Promise<void> {
+export async function buildServerBundle(cwd: string, dirs: Dirs, dbConfig: DbConfig, workflows?: import('../workflows/config.js').WorkflowConfig): Promise<void> {
   // The developer's React Router site is mounted in the bundled artifact too, same as `serve.ts`
   // — only when opted into (`ratchet generate` wrote `.ratchet/app-routes.server.ts`, and so the
   // generated `bundle` carries a `web` key).
@@ -292,6 +292,7 @@ export async function buildServerBundle(cwd: string, dirs: Dirs, dbConfig: DbCon
     `const app = await createRatchetApp({`,
     `  db,`,
     `  bundle,`,
+    workflows ? `  workflows: { adapter: 'inngest', appId: ${JSON.stringify(workflows.appId)}, baseUrl: process.env.INNGEST_BASE_URL, limits: ${JSON.stringify(workflows.limits ?? {})} },` : null,
     `  consoleAssets: createNodeFsAssetSource(${JSON.stringify(generatedDirRel)}),`,
     `  consolePath: ${JSON.stringify(dirs.consolePath)},`,
     hasWeb

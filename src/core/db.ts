@@ -22,6 +22,8 @@ type RawSqliteDb = LibSQLDatabase<any>;
  */
 export interface AnyDb {
   readonly dialect: Dialect;
+  /** Optional transactional model-event sink, installed by the workflow runtime. */
+  onMutation?: (event: { model: import('./model.js').ModelDefinition; before: Record<string, unknown> | null; after: Record<string, unknown> | null; event: 'create' | 'update' | 'remove'; userId?: string }) => Promise<void>;
   /** Runs a raw query and returns its rows as plain objects — the read/RETURNING path. */
   execute(query: SQL): Promise<Record<string, unknown>[]>;
   /** Runs a raw query for its side effect only (no rows needed back). */

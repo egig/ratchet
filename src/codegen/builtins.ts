@@ -1,3 +1,4 @@
+import { workflowModels } from '../workflows/models.js';
 import { User, Role, Session } from '../auth/models/index.js';
 import { Agent, Chat, Message, Provider } from '../automation/models/index.js';
 import { AutomationDomain } from '../automation/domain.js';
@@ -15,6 +16,7 @@ import type { ScannedForm } from './scan-forms.js';
  * no on-disk folder for `folderDomainOf` to infer it from.
  */
 export const BUILTIN_MODELS: ScannedModel[] = [
+  ...workflowModels.map((model, i) => ({ filePath: '@egig/ratchet/workflows', exportName: ['Workflow','WorkflowVersion','WorkflowRun','WorkflowStep','WorkflowOutbox'][i]!, model, builtinPackage: '@egig/ratchet/workflows', domain: 'automation' })),
   { filePath: '@egig/ratchet/auth (User)', exportName: 'User', model: User, builtinPackage: '@egig/ratchet/auth', domain: 'auth' },
   { filePath: '@egig/ratchet/auth (Role)', exportName: 'Role', model: Role, builtinPackage: '@egig/ratchet/auth', domain: 'auth' },
   { filePath: '@egig/ratchet/auth (Session)', exportName: 'Session', model: Session, builtinPackage: '@egig/ratchet/auth', domain: 'auth' },

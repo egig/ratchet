@@ -27,6 +27,7 @@ export interface RatchetBundle {
 export interface RatchetAppOptions {
   /** drizzle-postgres client (already constructed — `createRatchetApp` never reads config) */
   db: AnyDb;
+  workflows?: import('../workflows/config.js').WorkflowConfig;
   bundle: RatchetBundle;
   /** omit → `field.file` writes fail with 500, same as today */
   storage?: FileStorage;
@@ -62,10 +63,20 @@ export interface RatchetAppOptions {
  * (`Bun.serve` / `serveNode` / `export default`) and logs.
  */
 export async function createRatchetApp(opts: RatchetAppOptions): Promise<App> {
-  const { db, bundle, storage } = opts;
+  const { bundle, storage } = opts;
+  let db = opts.db;
   const { models, domains } = bundle;
 
   const app = new App();
+  if (opts.workflows) {
+    const { WorkflowRuntime } = await import('../workflows/runtime.js');
+    const { createInngestAdapter } = await import('../workflows/inngest.js');
+    const { createWorkflowRouter } = await import('../workflows/router.js');
+    const runtime = new WorkflowRuntime(db, models, opts.workflows);
+    runtime.adapter = createInngestAdapter(runtime);
+    db = runtime.observe();
+    app.route('/api/workflows', createWorkflowRouter(runtime));
+  }
   // Route matching is a linear scan, first structural match wins (router/http-app.ts), so the
   // order here IS the precedence. Fixed-prefix routers first; the console (whose `consolePath`
   // can be '/', making its `/*` a total catch-all) after them; the web app's own `/` catch-all

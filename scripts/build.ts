@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const SRC_DIRS = ['core', 'cli', 'codegen', 'router', 'server', 'auth', 'automation', 'workspace', 'web', 'console'];
+const SRC_DIRS = ['core', 'cli', 'codegen', 'router', 'server', 'auth', 'automation', 'workflows', 'workspace', 'web', 'console'];
 
 // `ratchet init`'s scaffold source — a verbatim project tree, not framework code. Kept out of the
 // build's entrypoint walk (its .ts/.tsx must not be transformed) and copied wholesale into dist/.

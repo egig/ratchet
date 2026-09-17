@@ -38,6 +38,7 @@ export async function runServe(cwd: string): Promise<ReturnType<typeof Bun.serve
       ? { entrySrc: await webEntrySrc(dirs), publicDir: dirs.publicDir, generatedDir }
       : undefined,
     env: resolveEnv(config),
+    workflows: config.workflows,
   });
 
   const port = Number(process.env.PORT ?? 3000);

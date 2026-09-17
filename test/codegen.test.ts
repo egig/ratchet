@@ -64,8 +64,8 @@ describe('generate() against a self-contained model fixture', () => {
     const { modelCount } = await generate({ modelsDir, generatedDir });
     // 2 user models + 3 built-in auth models (User/Role/Session) + 4 built-in
     // automation models (Agent/Chat/Message/Provider) + 2 built-in workspace
-    // models (Workspace/WorkspaceView) — built-ins are always present.
-    expect(modelCount).toBe(11);
+    // models (Workspace/WorkspaceView) + 5 workflow models — built-ins are always present.
+    expect(modelCount).toBe(16);
 
     const schemaSrc = await import('node:fs/promises').then((fs) =>
       fs.readFile(path.join(generatedDir, 'schema.ts'), 'utf8'),

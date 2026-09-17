@@ -27,6 +27,8 @@ export type Operation = 'create' | 'update' | 'remove' | (string & {});
 
 export interface OperationContext {
   operation: Operation;
+  /** Stable workflow effect key for idempotent external custom operations/hooks. */
+  effectKey?: string;
   /** id of the record being acted on; required for update/remove, absent for create */
   id?: string;
   /** the pending write payload — mutated by business logic before `persist` runs */

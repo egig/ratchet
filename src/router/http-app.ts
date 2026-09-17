@@ -10,7 +10,7 @@
  * exactly the behavior this reproduces.
  */
 
-type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export type Handler = (c: Ctx) => Response | Promise<Response>;
 export type ErrorHandler = (err: unknown, c: Ctx) => Response | Promise<Response>;
@@ -132,6 +132,10 @@ export class App {
 
   post(path: string, handler: Handler): void {
     this.entries.push({ kind: 'route', method: 'POST', pattern: splitPath(path), handler });
+  }
+
+  put(path: string, handler: Handler): void {
+    this.entries.push({ kind: 'route', method: 'PUT', pattern: splitPath(path), handler });
   }
 
   patch(path: string, handler: Handler): void {

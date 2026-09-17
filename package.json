@@ -5,7 +5,8 @@
   "license": "MIT",
   "type": "module",
   "workspaces": [
-    "docs"
+    "docs",
+    "example"
   ],
   "files": [
     "dist"
@@ -34,7 +35,8 @@
     "./storage/node": "./dist/core/storage-node.js",
     "./storage/s3": "./dist/core/storage-s3.js",
     "./storage/gcs": "./dist/core/storage-gcs.js",
-    "./storage/azure": "./dist/core/storage-azure.js"
+    "./storage/azure": "./dist/core/storage-azure.js",
+    "./workflows": "./dist/workflows/index.js"
   },
   "scripts": {
     "build": "bun scripts/build.ts",
@@ -62,12 +64,14 @@
     "@radix-ui/react-label": "^2.1.6",
     "@tailwindcss/cli": "^4.3.3",
     "@tanstack/react-query": "^5.102.4",
+    "@xyflow/react": "^12.11.6",
     "assistant-stream": "^0.3.40",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "codejar": "^4.3.0",
     "commander": "^12.1.0",
     "drizzle-orm": "^0.36.4",
+    "inngest": "^4.20.0",
     "langchain": "^1.5.10",
     "postgres": "^3.4.5",
     "react-router": "^8.3.0",
