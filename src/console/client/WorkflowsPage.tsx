@@ -13,13 +13,25 @@ import {
   type NodePositionChange,
   type Node as FlowNode,
 } from '@xyflow/react';
-import { type Binding, type Graph, type WorkflowNode } from '../../workflows/graph.js';
+import { BUILTIN_ACTIONS, type BuiltinAction, type Binding, type Graph, type WorkflowNode } from '../../workflows/graph.js';
 import type { ConsoleFieldMeta, ConsoleModelMeta } from '../serialize-model.js';
 import { Button } from './ui/button.js';
 import { WorkflowButtonHandle } from './WorkflowButtonHandle.js';
 import { WorkflowNodePopover } from './WorkflowNodePopover.js';
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from './ui/dialog.js';
-import { PlusIcon } from './icons.js';
+import {
+  PlusIcon,
+  BoltIcon,
+  MagnifyingGlassIcon,
+  EyeIcon,
+  PlusCircleIcon,
+  EditIcon,
+  TrashIcon,
+  ToolIcon,
+  BranchIcon,
+  LoopIcon,
+} from './icons.js';
+import type { ComponentType, SVGProps } from 'react';
 
 type Workflow = {
   id: string;
@@ -60,16 +72,31 @@ const control = 'w-full rounded-md border border-input bg-background px-2 py-1.5
 type StepKind = Exclude<WorkflowNode['kind'], 'trigger'>;
 type Port = Graph['edges'][number]['port'];
 const stepTypes: { kind: StepKind; label: string; description: string }[] = [
-  { kind: 'query', label: 'Query', description: 'Find matching records' },
-  { kind: 'read', label: 'Read', description: 'Look up a record by ID' },
-  { kind: 'create', label: 'Create', description: 'Create a new record' },
-  { kind: 'update', label: 'Update', description: 'Change an existing record' },
-  { kind: 'remove', label: 'Remove', description: 'Delete a record' },
-  { kind: 'operation', label: 'Operation', description: 'Run a model operation' },
+  { kind: 'model', label: 'Model Operation', description: 'Query, read, or change a record' },
   { kind: 'condition', label: 'Condition', description: 'Branch on a comparison' },
   { kind: 'foreach', label: 'For each', description: 'Repeat steps for each item' },
 ];
 const NO_PORTS: Port[] = [];
+const BUILTIN_OPERATIONS: { name: BuiltinAction; label: string }[] = [
+  { name: 'query', label: 'Query' },
+  { name: 'read', label: 'Read' },
+  { name: 'create', label: 'Create' },
+  { name: 'update', label: 'Update' },
+  { name: 'remove', label: 'Remove' },
+];
+const BUILTIN_OPERATION_ICONS: Record<BuiltinAction, ComponentType<SVGProps<SVGSVGElement>>> = {
+  query: MagnifyingGlassIcon,
+  read: EyeIcon,
+  create: PlusCircleIcon,
+  update: EditIcon,
+  remove: TrashIcon,
+};
+function nodeIcon(n: WorkflowNode): ComponentType<SVGProps<SVGSVGElement>> {
+  if (n.kind === 'trigger') return BoltIcon;
+  if (n.kind === 'condition') return BranchIcon;
+  if (n.kind === 'foreach') return LoopIcon;
+  return BUILTIN_OPERATION_ICONS[n.operation as BuiltinAction] ?? ToolIcon;
+}
 
 function WorkflowCard({ data }: NodeProps<FlowNode<{
   node: WorkflowNode;
@@ -82,11 +109,15 @@ function WorkflowCard({ data }: NodeProps<FlowNode<{
   const n = data.node;
   const ports: Port[] =
     n.kind === 'condition' ? ['true', 'false'] : n.kind === 'foreach' ? ['success', 'partial'] : ['next'];
+  const Icon = data.loopStart ? LoopIcon : nodeIcon(n);
+  const kindLabel =
+    n.kind === 'foreach' ? 'For each' : n.kind === 'model' ? (n.operation ?? 'Model Operation') : n.kind;
   return (
-    <div className="min-w-40 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-sm">
+    <div className="min-w-40 rounded-lg border border-border bg-surface p-3 text-foreground shadow-md">
       {n.kind !== 'trigger' && <Handle type="target" position={Position.Left} />}
-      <div className="text-xs uppercase text-muted-foreground">
-        {data.loopStart ? 'Loop body' : n.kind === 'foreach' ? 'For each' : n.kind}
+      <div className="flex items-center gap-1.5 text-xs uppercase text-muted-foreground">
+        <Icon className="size-3.5 shrink-0" />
+        <span className="truncate">{data.loopStart ? 'Loop body' : kindLabel}</span>
       </div>
       {data.loopStart ? (
         <div className="font-medium">{n.label}</div>
@@ -558,7 +589,7 @@ export function WorkflowsPage() {
     }
   }
   for (const n of g.nodes.filter((n) => ancestors.has(n.id))) {
-    if (n.kind === 'query') {
+    if (n.kind === 'model' && n.operation === 'query') {
       options.push(
         { label: `${n.label}.items`, source: n.id, path: ['items'] },
         { label: `${n.label}.count`, source: n.id, path: ['count'] },
@@ -583,20 +614,24 @@ export function WorkflowsPage() {
       meta.data.models.find((m) => m.name === query?.model),
     );
   }
-  const fields =
-    node?.kind === 'operation'
-      ? (model?.operations.find((o) => o.name === node.operation)?.params ?? [])
-      : (model?.fields.filter((f) => !f.sensitive) ?? []);
+  const modelOperation = node?.kind === 'model' ? node.operation : undefined;
+  const isCustomOperation =
+    !!modelOperation && !(BUILTIN_ACTIONS as readonly string[]).includes(modelOperation);
+  const fields = isCustomOperation
+    ? (model?.operations.find((o) => o.name === modelOperation)?.params ?? [])
+    : (model?.fields.filter((f) => !f.sensitive) ?? []);
   const keys =
     node?.kind === 'condition'
       ? ['left', 'right']
       : node?.kind === 'foreach'
         ? ['items']
-        : node?.kind === 'read' || node?.kind === 'remove'
-          ? ['id']
-          : node?.kind === 'update' || node?.kind === 'operation'
-            ? ['id', ...fields.map((f) => f.key)]
-            : fields.map((f) => f.key);
+        : !modelOperation
+          ? []
+          : modelOperation === 'read' || modelOperation === 'remove'
+            ? ['id']
+            : modelOperation === 'update' || isCustomOperation
+              ? ['id', ...fields.map((f) => f.key)]
+              : fields.map((f) => f.key);
   return (
     <div className="flex h-[calc(100dvh-5rem)] flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b p-3">
@@ -890,7 +925,7 @@ export function WorkflowsPage() {
                         </>
                       ) : (
                         <>
-                          {['query', 'read', 'create', 'update', 'remove', 'operation'].includes(node.kind) && (
+                          {node.kind === 'model' && (
                             <label className="block text-sm">
                               Model
                               <select
@@ -907,20 +942,34 @@ export function WorkflowsPage() {
                               </select>
                             </label>
                           )}
-                          {node.kind === 'operation' && (
-                            <select
-                              aria-label="Operation"
-                              className={control}
-                              value={node.operation ?? ''}
-                              onChange={(e) => patch({ operation: e.target.value, inputs: {} })}
-                            >
-                              <option value="">Choose operation</option>
-                              {model?.operations.map((o) => (
-                                <option key={o.name} value={o.name}>
-                                  {o.label}
-                                </option>
-                              ))}
-                            </select>
+                          {node.kind === 'model' && node.model && (
+                            <label className="block text-sm">
+                              Operation
+                              <select
+                                aria-label="Operation"
+                                className={control}
+                                value={node.operation ?? ''}
+                                onChange={(e) => patch({ operation: e.target.value, inputs: {} })}
+                              >
+                                <option value="">Choose operation</option>
+                                <optgroup label="Built-in">
+                                  {BUILTIN_OPERATIONS.map((o) => (
+                                    <option key={o.name} value={o.name}>
+                                      {o.label}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                                {!!model?.operations.length && (
+                                  <optgroup label="Custom">
+                                    {model.operations.map((o) => (
+                                      <option key={o.name} value={o.name}>
+                                        {o.label}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                              </select>
+                            </label>
                           )}
                           {node.kind === 'condition' && (
                             <select

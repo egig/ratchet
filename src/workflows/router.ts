@@ -74,7 +74,7 @@ export function createWorkflowRouter(runtime: WorkflowRuntime): App {
       const model = runtime.registry[node?.model ?? ''];
       if (!model || !output || typeof output !== 'object') return {...s, label:node?.label};
       const value = output as Record<string,unknown>;
-      const safe = node?.kind === 'query' ? {items:await Promise.all((value.items as Record<string,unknown>[]).map(row => runtime.readable(db,model,row,user.roleId ?? '',user.id))),count:value.count} : await runtime.readable(db,model,value,user.roleId ?? '',user.id);
+      const safe = node?.operation === 'query' ? {items:await Promise.all((value.items as Record<string,unknown>[]).map(row => runtime.readable(db,model,row,user.roleId ?? '',user.id))),count:value.count} : await runtime.readable(db,model,value,user.roleId ?? '',user.id);
       return {...s,label:node?.label,output:safe};
     }));
     return c.json({ ...publicRun, steps: visibleSteps });
@@ -218,7 +218,8 @@ export function createWorkflowRouter(runtime: WorkflowRuntime): App {
             tx,
             {
               id: 'manual',
-              kind: 'read',
+              kind: 'model',
+              operation: 'read',
               label: 'Manual trigger',
               model: graph.trigger.model,
               inputs: {},

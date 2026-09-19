@@ -45,4 +45,9 @@ export {
   Squares2X2Icon as ConsoleIcon,
   SunIcon,
   MoonIcon,
+  BoltIcon,
+  EyeIcon,
+  PlusCircleIcon,
+  ArrowsRightLeftIcon as BranchIcon,
+  ArrowPathIcon as LoopIcon,
 } from '@heroicons/react/20/solid';

@@ -8,19 +8,15 @@ const binding = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('ref'), source: z.string(), path: z.array(z.string()) }),
 ]);
 export type Binding = z.infer<typeof binding>;
+/** The five built-in record actions every model exposes for free in a workflow's Model Operation
+ * step — anything else typed into `operation` is a custom operation name looked up on the model
+ * (`ModelDefinition.operations`, core/model.ts). `'query'` is reserved off that map too
+ * (`RESERVED_OPERATION_NAMES`) so a custom operation can never collide with it. */
+export const BUILTIN_ACTIONS = ['query', 'read', 'create', 'update', 'remove'] as const;
+export type BuiltinAction = (typeof BUILTIN_ACTIONS)[number];
 const node = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
-  kind: z.enum([
-    'trigger',
-    'query',
-    'read',
-    'create',
-    'update',
-    'remove',
-    'operation',
-    'condition',
-    'foreach',
-  ]),
+  kind: z.enum(['trigger', 'model', 'condition', 'foreach']),
   label: z.string(),
   position: z.object({ x: z.number(), y: z.number() }),
   parentId: z.string().optional(),
@@ -89,20 +85,19 @@ export function validateGraph(value: unknown, registry: Record<string, ModelDefi
   for (const n of g.nodes) {
     if (n.parentId && (byId.get(n.parentId)?.kind !== 'foreach' || byId.get(n.parentId)?.parentId))
       fail('Only one level of For each is supported');
-    if (n.kind === 'foreach' && n.parentId) fail('Nested loops are not supported');
-    if (['query', 'read', 'create', 'update', 'remove', 'operation'].includes(n.kind)) {
+    const isCustomOp = n.kind === 'model' && !(BUILTIN_ACTIONS as readonly string[]).includes(n.operation ?? '');
+    if (n.kind === 'model') {
       const m = registry[n.model ?? ''];
       if (!m || m.api?.hidden) fail(`Unknown or private model on ${n.label}`);
-      if (n.kind === 'operation' && !m!.operations[n.operation ?? ''])
-        fail(`Unknown operation on ${n.label}`);
+      if (!n.operation) fail(`Choose an operation on ${n.label}`);
+      if (isCustomOp && !m!.operations[n.operation ?? '']) fail(`Unknown operation on ${n.label}`);
       for (const key of Object.keys(n.inputs)) {
         if (['id', 'items', 'left', 'right'].includes(key)) continue;
-        const fields =
-          n.kind === 'operation'
-            ? typeof m!.operations[n.operation!] === 'function'
-              ? {}
-              : ((m!.operations[n.operation!] as { params?: Record<string, unknown> }).params ?? {})
-            : m!.fields;
+        const fields = isCustomOp
+          ? typeof m!.operations[n.operation!] === 'function'
+            ? {}
+            : ((m!.operations[n.operation!] as { params?: Record<string, unknown> }).params ?? {})
+          : m!.fields;
         if (!(key in fields)) fail(`Unknown input ${key} on ${n.label}`);
         if (m!.fields[key]?.sensitive) fail('Sensitive fields are not available in workflows');
       }
@@ -120,14 +115,13 @@ export function validateGraph(value: unknown, registry: Record<string, ModelDefi
     }
     const targetModel = registry[n.model ?? ''];
     const operation = targetModel?.operations[n.operation ?? ''];
-    const targetFields =
-      n.kind === 'operation'
-        ? typeof operation === 'object'
-          ? (operation.params ?? {})
-          : {}
-        : (targetModel?.fields ?? {});
+    const targetFields = isCustomOp
+      ? typeof operation === 'object'
+        ? (operation.params ?? {})
+        : {}
+      : (targetModel?.fields ?? {});
     const required =
-      n.kind === 'read' || n.kind === 'update' || n.kind === 'remove' || n.kind === 'operation'
+      n.kind === 'model' && n.operation !== 'create' && n.operation !== 'query'
         ? ['id']
         : n.kind === 'foreach'
           ? ['items']
@@ -137,13 +131,13 @@ export function validateGraph(value: unknown, registry: Record<string, ModelDefi
               : ['left', 'right']
             : [];
     if (n.kind === 'condition' && !n.operator) fail('Choose a condition operator');
-    if (n.kind === 'create' || n.kind === 'operation')
+    if (n.kind === 'model' && (n.operation === 'create' || isCustomOp))
       for (const [key, f] of Object.entries(targetFields))
         if (f.required && f.default === undefined && key !== targetModel?.api?.ownerField) required.push(key);
     for (const key of required) if (!n.inputs[key]) fail(`Missing ${key} on ${n.label}`);
     for (const [key, b] of Object.entries(n.inputs)) {
       const target = targetFields[key];
-      if (b.kind === 'literal' && target && ['create', 'update', 'operation'].includes(n.kind)) {
+      if (b.kind === 'literal' && target && (n.operation === 'create' || n.operation === 'update' || isCustomOp)) {
         if (!buildParamsSchema({ [key]: target }).safeParse({ [key]: b.value }).success)
           fail(`Invalid value for ${key} on ${n.label}`);
       }
@@ -244,7 +238,7 @@ export function referenceModel(
     b.path[0] &&
     source?.kind !== 'condition' &&
     source?.kind !== 'foreach' &&
-    !(source?.kind === 'query' && b.source !== 'item')
+    !(source?.operation === 'query' && b.source !== 'item')
     ? { model, field: b.path[0] }
     : undefined;
 }

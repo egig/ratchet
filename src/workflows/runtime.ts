@@ -175,14 +175,13 @@ export class WorkflowRuntime {
   async action(db: AnyDb, n: WorkflowNode, input: Row, p: RunPayload, effectKey?: string): Promise<unknown> {
     const m = this.registry[n.model ?? ''];
     if (!m || m.api?.hidden) throw new Error('Model is unavailable');
-    const action =
-      n.kind === 'query' || n.kind === 'read' ? 'read' : n.kind === 'operation' ? n.operation! : n.kind;
+    const action = n.operation === 'query' ? 'read' : n.operation!;
     const permissions = await listPermissionsForRole(db, p.roleId);
     const resource = permissions[m.name] ?? permissions['*'];
     const grant = resource?.[action] ?? resource?.['*'];
     if (!grant) throw new Error(`Missing permission ${m.name}:${action}`);
     const own = grant.scope !== 'any';
-    if (n.kind === 'query') {
+    if (n.operation === 'query') {
       const fields = await resolveGrantedFields(db, p.roleId, m.name, 'read');
       const filters: FilterNode[] = Object.entries(input).map(([field, value]) => {
         if (!(field in m.fields) || m.fields[field]?.sensitive || (fields !== '*' && !fields.has(field)))
@@ -207,18 +206,19 @@ export class WorkflowRuntime {
       };
     }
     const id = typeof input.id === 'string' ? input.id : undefined;
-    if (n.kind !== 'create') {
+    if (n.operation !== 'create') {
       if (!id) throw new Error('A record ID is required');
       if (own) await assertOwnsRow(db, m, id, p.serviceId);
     }
-    if (n.kind === 'read') return this.readable(db, m, await requireRow(db, m, id!), p.roleId, p.serviceId);
+    if (n.operation === 'read') return this.readable(db, m, await requireRow(db, m, id!), p.roleId, p.serviceId);
     const { id: _, ...values } = input;
-    if (n.kind === 'create' || n.kind === 'update')
-      assertWriteFieldsAllowed(m, values, await resolveGrantedFields(db, p.roleId, m.name, n.kind));
+    if (n.operation === 'create' || n.operation === 'update')
+      assertWriteFieldsAllowed(m, values, await resolveGrantedFields(db, p.roleId, m.name, n.operation));
     const entry = m.operations[action];
     if (!entry) throw new Error('Operation no longer exists');
+    const isCustom = action !== 'create' && action !== 'update' && action !== 'remove';
     const data =
-      n.kind === 'operation' && typeof entry !== 'function' && entry.params
+      isCustom && typeof entry !== 'function' && entry.params
         ? (buildParamsSchema(entry.params).parse(values) as Row)
         : values;
     const pipeline = typeof entry === 'function' ? entry : entry.pipeline;
@@ -227,7 +227,7 @@ export class WorkflowRuntime {
       operation: action,
       id,
       effectKey,
-      input: n.kind === 'create' ? forceOwnerOnCreate(m, data, p.serviceId) : data,
+      input: n.operation === 'create' ? forceOwnerOnCreate(m, data, p.serviceId) : data,
       doc: null,
       db,
       registry: this.registry,
@@ -255,7 +255,7 @@ export class WorkflowRuntime {
       const model = this.registry[node.model ?? ''];
       const value = values[node.id];
       if (model && value) {
-        const records = node.kind === 'query' ? (value as {items:unknown[]}).items : [value];
+        const records = node.operation === 'query' ? (value as {items:unknown[]}).items : [value];
         for (const row of records) await this.assertSnapshotReadable(model, row, p);
       }
       if (node.kind === 'foreach' && value) for (const item of (value as {results:{output?:Row}[]}).results) if (item.output) await this.assertEnvironmentReadable(item.output,p);
@@ -270,7 +270,7 @@ export class WorkflowRuntime {
         await this.assertSnapshotReadable(source.model, snapshot, p, source.field);
       } else {
         const node = p.graph.nodes.find(x => x.id === b.source);
-        if (node?.kind === 'query' || node?.kind === 'foreach') await this.assertEnvironmentReadable(values,p);
+        if (node?.operation === 'query' || node?.kind === 'foreach') await this.assertEnvironmentReadable(values,p);
       }
     }
     return Object.fromEntries(Object.entries(n.inputs).map(([k, b]) => [k, resolveBinding(b, values)]));

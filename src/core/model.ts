@@ -62,7 +62,9 @@ export type OperationEntry = PipelineFn | CustomOperationDefinition;
 
 /** Operation names no model may declare a custom operation under — `create`/`update`/`remove` are
  * the fixed builtin keys (typed separately below); `read` and `*` are reserved by the permission
- * system (`ratchet/auth`'s `validateRolePermissions`); `upload` is reserved because
+ * system (`ratchet/auth`'s `validateRolePermissions`); `query` is reserved by a workflow's Model
+ * Operation step, whose `operation` field also accepts the built-in record actions alongside
+ * custom operation names (`BUILTIN_ACTIONS`, workflows/graph.ts); `upload` is reserved because
  * `POST /:model/:field/upload` (router/create-router.ts) already occupies that exact path shape
  * for models with a `file` field. */
 export const RESERVED_OPERATION_NAMES: ReadonlySet<string> = new Set([
@@ -70,6 +72,7 @@ export const RESERVED_OPERATION_NAMES: ReadonlySet<string> = new Set([
   'update',
   'remove',
   'read',
+  'query',
   'upload',
   '*',
 ]);

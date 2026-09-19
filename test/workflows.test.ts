@@ -43,7 +43,8 @@ const graph = (): Graph => ({
     ...defaultGraph().nodes,
     {
       id: 'write',
-      kind: 'create',
+      kind: 'model',
+      operation: 'create',
       label: 'Create',
       position: { x: 200, y: 0 },
       model: 'products',
@@ -187,7 +188,8 @@ describe('model workflow durability', () => {
         {
           id: 'write',
           parentId: 'loop',
-          kind: 'create',
+          kind: 'model',
+          operation: 'create',
           label: 'Create',
           model: 'products',
           position: { x: 0, y: 0 },
@@ -273,7 +275,8 @@ test('recovery repairs a later loop without replaying the partial branch', async
       {
         id: 'aw',
         parentId: 'a',
-        kind: 'create',
+        kind: 'model',
+        operation: 'create',
         model: 'products',
         label: 'A write',
         position: { x: 0, y: 0 },
@@ -289,7 +292,8 @@ test('recovery repairs a later loop without replaying the partial branch', async
       {
         id: 'bw',
         parentId: 'b',
-        kind: 'create',
+        kind: 'model',
+        operation: 'create',
         model: 'products',
         label: 'B write',
         position: { x: 0, y: 0 },
@@ -297,7 +301,8 @@ test('recovery repairs a later loop without replaying the partial branch', async
       },
       {
         id: 'notify',
-        kind: 'create',
+        kind: 'model',
+        operation: 'create',
         model: 'products',
         label: 'Partial branch',
         position: { x: 0, y: 0 },
