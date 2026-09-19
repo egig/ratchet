@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
@@ -7,10 +7,10 @@ import {
   Controls,
   Handle,
   Position,
-  applyNodeChanges,
   useInternalNode,
   useReactFlow,
   type NodeProps,
+  type NodePositionChange,
   type Node as FlowNode,
 } from '@xyflow/react';
 import { type Binding, type Graph, type WorkflowNode } from '../../workflows/graph.js';
@@ -19,6 +19,7 @@ import { Button } from './ui/button.js';
 import { WorkflowButtonHandle } from './WorkflowButtonHandle.js';
 import { WorkflowNodePopover } from './WorkflowNodePopover.js';
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from './ui/dialog.js';
+import { PlusIcon } from './icons.js';
 
 type Workflow = {
   id: string;
@@ -68,10 +69,12 @@ const stepTypes: { kind: StepKind; label: string; description: string }[] = [
   { kind: 'condition', label: 'Condition', description: 'Branch on a comparison' },
   { kind: 'foreach', label: 'For each', description: 'Repeat steps for each item' },
 ];
+const NO_PORTS: Port[] = [];
+
 function WorkflowCard({ data }: NodeProps<FlowNode<{
   node: WorkflowNode;
-  onEdit: () => void;
-  onAdd: (port: Port) => void;
+  onEdit: (nodeId: string) => void;
+  onAdd: (nodeId: string, port: Port) => void;
   connectedPorts: Port[];
   canEdit: boolean;
   loopStart: boolean;
@@ -92,7 +95,7 @@ function WorkflowCard({ data }: NodeProps<FlowNode<{
           className="nodrag block text-left font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`Edit ${n.label}`}
           aria-haspopup="dialog"
-          onClick={data.onEdit}
+          onClick={() => data.onEdit(n.id)}
         >
           {n.label}
         </button>
@@ -104,7 +107,7 @@ function WorkflowCard({ data }: NodeProps<FlowNode<{
             port={p}
             top={`${((i + 1) * 100) / (ports.length + 1)}%`}
             showButton={data.canEdit && !data.connectedPorts.includes(p)}
-            onAdd={() => data.onAdd(p)}
+            onAdd={() => data.onAdd(n.id, p)}
           />
           <span className="mr-2 text-[10px] text-muted-foreground">{p}</span>
         </div>
@@ -259,6 +262,88 @@ export function WorkflowsPage() {
   const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
   const [addingStep, setAddingStep] = useState<{ sourceId: string; port: Port }>();
   const canvasRef = useRef<HTMLElement>(null);
+  // Stable across renders (state setters never change identity) so every node's `data.onAdd`/
+  // `data.onEdit` prop stays referentially equal — otherwise every node's `data` object would look
+  // "changed" to @xyflow/react on every render (e.g. each drag tick), defeating its internal
+  // per-node memoization and re-rendering the whole canvas (visible as a flicker) instead of just
+  // the node actually being dragged.
+  const handleAddPort = useCallback(
+    (nodeId: string, port: Port) => {
+      select(nodeId);
+      setNodeEditorOpen(false);
+      setAddingStep({ sourceId: nodeId, port });
+    },
+    [],
+  );
+  const handleEditNode = useCallback((nodeId: string) => {
+    setAddingStep(undefined);
+    select(nodeId);
+    setNodeEditorOpen(true);
+  }, []);
+  // Grouped once per render, and stable across drag-only updates (edges don't change while
+  // dragging a node) — see the comment above `handleAddPort` for why stability here matters.
+  const connectedPortsByNode = useMemo(() => {
+    const map = new Map<string, Port[]>();
+    for (const e of w?.draft.edges ?? []) {
+      const arr = map.get(e.source);
+      if (arr) arr.push(e.port);
+      else map.set(e.source, [e.port]);
+    }
+    return map;
+  }, [w?.draft.edges]);
+  // @xyflow/react's `adoptUserNodes` decides whether a node needs reprocessing by comparing the
+  // exact object reference we hand it in `nodes` (`userNode === internalNode.internals.userNode`,
+  // `checkEquality: true` by default) — not a deep/field comparison. Handing it a fresh `{ id,
+  // position, data, ... }` literal every render (as a plain `.map()` would) fails that check for
+  // *every* node on *every* render, so it rebuilds the node's internal record from scratch —
+  // including resetting `measured` to `{ width: undefined, height: undefined }` since our literal
+  // has no `measured` field — which is treated as "not yet measured" until the next
+  // ResizeObserver tick. That unmeasured flash, repeating on every render during a drag, is the
+  // blink. This cache hands back the *same* object for a node whose relevant inputs haven't
+  // changed, so unrelated/unmoved nodes are left alone.
+  const flowNodeCache = useRef(
+    new Map<
+      string,
+      { n: WorkflowNode; canEdit: boolean; loopStart: boolean; connectedPorts: Port[]; selected: boolean; flow: FlowNode }
+    >(),
+  ).current;
+  // The node actually being dragged legitimately gets a new `n` (its position changes every
+  // pointer-move, in controlled mode we're the only thing moving it — xyflow's `triggerNodeChanges`
+  // only writes back into its own store when using `useNodesState`'s `defaultNodes`, not a
+  // `nodes`-prop-controlled flow like this one), so it can't reuse the cache above and rebuilds
+  // every tick regardless. Without `measured` on that rebuilt object, `adoptUserNodes` (see the
+  // comment above) resets it to `{ width: undefined, height: undefined }` on every tick, which is
+  // what was still blinking. Reapplying the last known `dimensions` from `onNodesChange` (captured
+  // below) keeps it "measured" across every rebuild.
+  const measuredByNode = useRef(new Map<string, { width?: number; height?: number }>()).current;
+  function buildFlowNode(n: WorkflowNode, isLoopStart: boolean): FlowNode {
+    const canEdit = !!perms.edit;
+    const connectedPorts = connectedPortsByNode.get(n.id) ?? NO_PORTS;
+    const isSelected = n.id === selected;
+    const cached = flowNodeCache.get(n.id);
+    if (
+      cached &&
+      cached.n === n &&
+      cached.canEdit === canEdit &&
+      cached.loopStart === isLoopStart &&
+      cached.connectedPorts === connectedPorts &&
+      cached.selected === isSelected
+    ) {
+      return cached.flow;
+    }
+    const flow: FlowNode = {
+      id: n.id,
+      type: 'workflow',
+      position: n.position,
+      measured: measuredByNode.get(n.id),
+      draggable: !isLoopStart && canEdit,
+      connectable: !isLoopStart && canEdit,
+      data: { node: n, canEdit, loopStart: isLoopStart, connectedPorts, onAdd: handleAddPort, onEdit: handleEditNode },
+      selected: isSelected,
+    };
+    flowNodeCache.set(n.id, { n, canEdit, loopStart: isLoopStart, connectedPorts, selected: isSelected, flow });
+    return flow;
+  }
   const [scope, setScope] = useState<string>();
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -327,47 +412,76 @@ export function WorkflowsPage() {
   const perms = meta.data.permissions;
   if (!workflowId)
     return (
-      <div className="space-y-5 p-6">
-        <h1 className="text-2xl font-semibold">Workflows</h1>
-        <p className="text-muted-foreground">Automate model events with connected actions and conditions.</p>
-        {message && <p role="alert">{message}</p>}
-        {perms.edit && (
-          <form
-            className="flex max-w-lg gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void perform(async () => {
-                const created = await api<Workflow>('', 'POST', { name: newName });
-                await cache.invalidateQueries({ queryKey: ['workflows'] });
-                navigate(`/workflows/${created.id}`);
-              });
-            }}
-          >
-            <input
-              aria-label="Workflow name"
-              className={control}
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Workflow name"
-              required
-            />
-            <Button type="submit" disabled={busy}>
-              Create workflow
-            </Button>
-          </form>
-        )}
-        <div className="divide-y rounded-lg border">
-          {list.data.map((x) => (
-            <Link className="flex justify-between p-4 hover:bg-muted" key={x.id} to={`/workflows/${x.id}`}>
-              <span>{x.name}</span>
-              <span className="text-sm text-muted-foreground">
-                {x.enabled ? 'Published · active' : 'Draft / paused'}
-              </span>
-            </Link>
-          ))}
-          {!list.data.length && (
-            <p className="p-6 text-muted-foreground">Create your first model automation.</p>
+      <div>
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-lg font-semibold text-foreground">Workflows</h1>
+            <p className="text-sm text-muted-foreground">Automate model events with connected actions and conditions.</p>
+          </div>
+          {perms.edit && (
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void perform(async () => {
+                  const created = await api<Workflow>('', 'POST', { name: newName });
+                  await cache.invalidateQueries({ queryKey: ['workflows'] });
+                  navigate(`/workflows/${created.id}`);
+                });
+              }}
+            >
+              <input
+                aria-label="Workflow name"
+                className={`${control} w-48`}
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Workflow name"
+                required
+              />
+              <button
+                type="submit"
+                disabled={busy}
+                className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm text-accent-foreground hover:opacity-90 disabled:opacity-40"
+              >
+                <PlusIcon className="h-4 w-4" />
+                New
+              </button>
+            </form>
           )}
+        </div>
+
+        {message && <p role="alert" className="mb-3 text-sm text-destructive">{message}</p>}
+
+        <div className="overflow-x-auto rounded-md border border-border bg-surface">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-border bg-muted text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.data.map((x) => (
+                <tr key={x.id} className="border-b border-border last:border-0">
+                  <td className="px-3 py-2">
+                    <Link to={`/workflows/${x.id}`} className="font-medium text-foreground hover:underline">
+                      {x.name}
+                    </Link>
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {x.enabled ? 'Published · active' : 'Draft / paused'}
+                  </td>
+                </tr>
+              ))}
+              {!list.data.length && (
+                <tr>
+                  <td colSpan={2} className="px-3 py-6 text-center text-muted-foreground">
+                    No records.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -628,30 +742,7 @@ export function WorkflowsPage() {
       <div className="flex min-h-0 flex-1">
         <main ref={canvasRef} tabIndex={-1} aria-label="Workflow canvas" className="min-w-0 flex-1">
           <ReactFlow
-            nodes={canvasNodes.map((n) => ({
-              id: n.id,
-              type: 'workflow',
-              position: n.position,
-              draggable: n.id !== loopStart?.id && !!perms.edit,
-              connectable: n.id !== loopStart?.id && !!perms.edit,
-              data: {
-                node: n,
-                canEdit: !!perms.edit,
-                loopStart: n.id === loopStart?.id,
-                connectedPorts: g.edges.filter((e) => e.source === n.id).map((e) => e.port),
-                onAdd: (port: Port) => {
-                  select(n.id);
-                  setNodeEditorOpen(false);
-                  setAddingStep({ sourceId: n.id, port });
-                },
-                onEdit: () => {
-                  setAddingStep(undefined);
-                  select(n.id);
-                  setNodeEditorOpen(true);
-                },
-              },
-              selected: n.id === selected,
-            }))}
+            nodes={canvasNodes.map((n) => buildFlowNode(n, n.id === loopStart?.id))}
             edges={g.edges
               .filter((e) => g.nodes.find((n) => n.id === e.source)?.parentId === scope)
               .map((e) => ({
@@ -671,19 +762,24 @@ export function WorkflowsPage() {
               setNodeEditorOpen(true);
             }}
             onNodesChange={(changes) => {
+              // Recorded regardless of `perms.edit` (a viewer's nodes still get measured once on
+              // mount) — see `measuredByNode`'s comment above.
+              for (const c of changes) if (c.type === 'dimensions' && c.dimensions) measuredByNode.set(c.id, c.dimensions);
               if (!perms.edit) return;
-              const positions = applyNodeChanges(
-                changes.filter((c) => c.type === 'position'),
-                g.nodes.map((n) => ({ id: n.id, position: n.position, data: {} })),
-              );
-              if (changes.some((c) => c.type === 'position'))
-                edit({
-                  ...g,
-                  nodes: g.nodes.map((n) => ({
-                    ...n,
-                    position: positions.find((p) => p.id === n.id)?.position ?? n.position,
-                  })),
-                });
+              // Only rebuild the node(s) that actually moved — a drag fires this on every pointer
+              // move, and `g.nodes.map((n) => ({ ...n, ... }))` over *every* node (as this used to
+              // do, via `applyNodeChanges` over the whole list) would hand @xyflow/react a brand
+              // new object for every node on every frame, defeating its per-node memoization and
+              // forcing the whole canvas to re-render — the visible "blinking". Untouched nodes
+              // must keep their existing object reference.
+              const isMove = (c: (typeof changes)[number]): c is NodePositionChange =>
+                c.type === 'position' && !!c.position;
+              const moved = new Map(changes.filter(isMove).map((c) => [c.id, c.position]));
+              if (moved.size === 0) return;
+              edit({
+                ...g,
+                nodes: g.nodes.map((n) => (moved.has(n.id) ? { ...n, position: moved.get(n.id)! } : n)),
+              });
             }}
             onEdgesDelete={(edges) =>
               perms.edit &&
