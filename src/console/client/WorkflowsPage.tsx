@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
@@ -8,12 +8,17 @@ import {
   Handle,
   Position,
   applyNodeChanges,
+  useInternalNode,
+  useReactFlow,
   type NodeProps,
   type Node as FlowNode,
 } from '@xyflow/react';
-import { defaultGraph, type Binding, type Graph, type WorkflowNode } from '../../workflows/graph.js';
+import { type Binding, type Graph, type WorkflowNode } from '../../workflows/graph.js';
 import type { ConsoleFieldMeta, ConsoleModelMeta } from '../serialize-model.js';
 import { Button } from './ui/button.js';
+import { WorkflowButtonHandle } from './WorkflowButtonHandle.js';
+import { WorkflowNodePopover } from './WorkflowNodePopover.js';
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from './ui/dialog.js';
 
 type Workflow = {
   id: string;
@@ -51,35 +56,55 @@ async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> 
   return data;
 }
 const control = 'w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm';
-const kinds: WorkflowNode['kind'][] = [
-  'query',
-  'read',
-  'create',
-  'update',
-  'remove',
-  'operation',
-  'condition',
-  'foreach',
+type StepKind = Exclude<WorkflowNode['kind'], 'trigger'>;
+type Port = Graph['edges'][number]['port'];
+const stepTypes: { kind: StepKind; label: string; description: string }[] = [
+  { kind: 'query', label: 'Query', description: 'Find matching records' },
+  { kind: 'read', label: 'Read', description: 'Look up a record by ID' },
+  { kind: 'create', label: 'Create', description: 'Create a new record' },
+  { kind: 'update', label: 'Update', description: 'Change an existing record' },
+  { kind: 'remove', label: 'Remove', description: 'Delete a record' },
+  { kind: 'operation', label: 'Operation', description: 'Run a model operation' },
+  { kind: 'condition', label: 'Condition', description: 'Branch on a comparison' },
+  { kind: 'foreach', label: 'For each', description: 'Repeat steps for each item' },
 ];
-function WorkflowCard({ data }: NodeProps<FlowNode<{ node: WorkflowNode }>>) {
+function WorkflowCard({ data }: NodeProps<FlowNode<{
+  node: WorkflowNode;
+  onEdit: () => void;
+  onAdd: (port: Port) => void;
+  connectedPorts: Port[];
+  canEdit: boolean;
+  loopStart: boolean;
+}>>) {
   const n = data.node;
-  const ports =
+  const ports: Port[] =
     n.kind === 'condition' ? ['true', 'false'] : n.kind === 'foreach' ? ['success', 'partial'] : ['next'];
   return (
     <div className="min-w-40 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-sm">
       {n.kind !== 'trigger' && <Handle type="target" position={Position.Left} />}
       <div className="text-xs uppercase text-muted-foreground">
-        {n.kind === 'foreach' ? 'For each' : n.kind}
+        {data.loopStart ? 'Loop body' : n.kind === 'foreach' ? 'For each' : n.kind}
       </div>
-      <div className="font-medium">{n.label}</div>
+      {data.loopStart ? (
+        <div className="font-medium">{n.label}</div>
+      ) : (
+        <button
+          className="nodrag block text-left font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`Edit ${n.label}`}
+          aria-haspopup="dialog"
+          onClick={data.onEdit}
+        >
+          {n.label}
+        </button>
+      )}
       <div className="text-xs text-muted-foreground">{n.model}</div>
       {ports.map((p, i) => (
         <div key={p}>
-          <Handle
-            type="source"
-            id={p}
-            position={Position.Right}
-            style={{ top: `${((i + 1) * 100) / (ports.length + 1)}%` }}
+          <WorkflowButtonHandle
+            port={p}
+            top={`${((i + 1) * 100) / (ports.length + 1)}%`}
+            showButton={data.canEdit && !data.connectedPorts.includes(p)}
+            onAdd={() => data.onAdd(p)}
           />
           <span className="mr-2 text-[10px] text-muted-foreground">{p}</span>
         </div>
@@ -88,6 +113,21 @@ function WorkflowCard({ data }: NodeProps<FlowNode<{ node: WorkflowNode }>>) {
   );
 }
 const nodeTypes = { workflow: WorkflowCard };
+
+function FocusNewStep({ nodeId, onDone }: { nodeId?: string; onDone: () => void }) {
+  const node = useInternalNode(nodeId ?? '');
+  const { setCenter, getZoom } = useReactFlow();
+  useEffect(() => {
+    if (!nodeId || !node?.measured.width || !node.measured.height) return;
+    void setCenter(
+      node.internals.positionAbsolute.x + node.measured.width / 2,
+      node.internals.positionAbsolute.y + node.measured.height / 2,
+      { zoom: Math.min(getZoom(), 1), duration: 200 },
+    );
+    onDone();
+  }, [nodeId, node, setCenter, getZoom, onDone]);
+  return null;
+}
 
 function BindingInput({
   value,
@@ -215,6 +255,10 @@ export function WorkflowsPage() {
   });
   const [w, setW] = useState<Workflow>();
   const [selected, select] = useState('trigger');
+  const [focusStep, setFocusStep] = useState<string>();
+  const [nodeEditorOpen, setNodeEditorOpen] = useState(false);
+  const [addingStep, setAddingStep] = useState<{ sourceId: string; port: Port }>();
+  const canvasRef = useRef<HTMLElement>(null);
   const [scope, setScope] = useState<string>();
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -240,6 +284,9 @@ export function WorkflowsPage() {
     setDirty(false);
     setScope(undefined);
     select('trigger');
+    setNodeEditorOpen(false);
+    setAddingStep(undefined);
+    setFocusStep(undefined);
   }, [detail.data]);
   useEffect(() => {
     if (!dirty) return;
@@ -327,6 +374,44 @@ export function WorkflowsPage() {
   if (!w) return <div className="p-6">{detail.error?.message ?? 'Loading workflow…'}</div>;
   const g = w.draft;
   const node = g.nodes.find((n) => n.id === selected);
+  const visibleNodes = g.nodes.filter((n) => n.parentId === scope);
+  const loopStart: WorkflowNode | undefined = scope && !visibleNodes.length ? {
+    id: `loop-start:${scope}`,
+    kind: 'trigger',
+    label: 'Loop start',
+    position: { x: 60, y: 100 },
+    inputs: {},
+  } : undefined;
+  const canvasNodes = loopStart ? [loopStart] : visibleNodes;
+  const addStep = (kind: StepKind) => {
+    if (!perms.edit || !addingStep || (scope && kind === 'foreach')) return;
+    const source = canvasNodes.find((n) => n.id === addingStep.sourceId);
+    if (!source || g.edges.some((e) => e.source === source.id && e.port === addingStep.port)) return;
+    const firstInLoop = source.id === loopStart?.id;
+    const position = {
+      x: firstInLoop ? source.position.x : source.position.x + 300,
+      y: source.position.y + (['false', 'partial'].includes(addingStep.port) ? 160 : 0),
+    };
+    while (visibleNodes.some((n) => Math.abs(n.position.x - position.x) < 240 && Math.abs(n.position.y - position.y) < 140))
+      position.y += 160;
+    const id = crypto.randomUUID();
+    edit({
+      ...g,
+      nodes: [...g.nodes, {
+        id,
+        kind,
+        label: stepTypes.find((step) => step.kind === kind)!.label,
+        position,
+        inputs: {},
+        ...(scope ? { parentId: scope } : {}),
+      }],
+      edges: firstInLoop ? g.edges : [...g.edges, { source: source.id, target: id, port: addingStep.port }],
+    });
+    setAddingStep(undefined);
+    setFocusStep(id);
+    select(id);
+    setNodeEditorOpen(true);
+  };
   const model = meta.data.models.find((m) => m.name === node?.model);
   const options: { label: string; source: string; path: string[] }[] = [];
   const addFields = (source: string, prefix: string[], m?: ConsoleModelMeta) => {
@@ -399,7 +484,7 @@ export function WorkflowsPage() {
             ? ['id', ...fields.map((f) => f.key)]
             : fields.map((f) => f.key);
   return (
-    <div className="flex h-[calc(100vh-5rem)] flex-col">
+    <div className="flex h-[calc(100dvh-5rem)] flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b p-3">
         <Link to="/workflows" className="text-sm">
           ← Workflows
@@ -452,64 +537,121 @@ export function WorkflowsPage() {
             )}
           </>
         )}
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button variant="outline">Workflow settings</Button>
+          </DialogTrigger>
+          <DialogContent className="top-1/2 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-y-1/2">
+            <DialogTitle className="pr-8 text-lg font-semibold">Workflow settings</DialogTitle>
+            <DialogDescription className="mb-4 text-sm text-muted-foreground">
+              Choose the automation role and run this workflow manually.
+            </DialogDescription>
+            {message && <p role="alert" className="mb-4 text-sm">{message}</p>}
+            <fieldset disabled={!perms.edit}>
+              <label className="block text-sm">
+                Automation role
+                <select
+                  className={control}
+                  disabled={!perms.assignRole}
+                  value={w.roleId ?? ''}
+                  onChange={(e) => {
+                    setW({ ...w, roleId: e.target.value });
+                    setDirty(true);
+                  }}
+                >
+                  <option value="">Choose role</option>
+                  {meta.data.roles.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </fieldset>
+            {perms.run && (
+              <div className="mt-4 space-y-2 border-t pt-3">
+                <strong className="text-sm">Manual run</strong>
+                <p className="text-xs text-muted-foreground">
+                  Runs perform real actions using the automation role.
+                </p>
+                <input
+                  aria-label="Trigger record ID"
+                  className={control}
+                  placeholder="Trigger record ID"
+                  value={recordId}
+                  onChange={(e) => setRecordId(e.target.value)}
+                />
+                <label className="flex gap-2 text-sm">
+                  <input type="checkbox" checked={draftRun} onChange={(e) => setDraftRun(e.target.checked)} />
+                  Test saved draft
+                </label>
+                {dirty && <p className="text-xs text-muted-foreground">Save the draft before running.</p>}
+                <Button
+                  disabled={busy || dirty}
+                  onClick={() =>
+                    void perform(async () => {
+                      const r = await api<Run>(`/${w.id}/run`, 'POST', {
+                        draft: draftRun,
+                        recordId: recordId || undefined,
+                      });
+                      setRunId(r.id);
+                      setMessage('Run queued. The dispatcher picks it up within a minute.');
+                    })
+                  }
+                >
+                  Run workflow
+                </Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
+      {scope && (
+        <div className="flex items-center gap-3 border-b px-3 py-2">
+          <Button variant="outline" onClick={() => {
+            select(scope);
+            setFocusStep(scope);
+            setScope(undefined);
+            setNodeEditorOpen(false);
+            setAddingStep(undefined);
+          }}>
+            ← Main flow
+          </Button>
+          <span className="text-sm text-muted-foreground">{g.nodes.find((n) => n.id === scope)?.label} · Loop body</span>
+        </div>
+      )}
       {message && (
         <p role="alert" className="border-b px-4 py-2 text-sm">
           {message}
         </p>
       )}
       <div className="flex min-h-0 flex-1">
-        <aside className="w-44 shrink-0 space-y-2 overflow-auto border-r p-3">
-          <p className="text-xs font-semibold uppercase text-muted-foreground">Add step</p>
-          {kinds
-            .filter((k) => !scope || k !== 'foreach')
-            .map((kind) => (
-              <button
-                disabled={!perms.edit}
-                key={kind}
-                className="block w-full rounded border px-2 py-2 text-left text-sm hover:bg-muted disabled:opacity-40"
-                onClick={() => {
-                  const id = crypto.randomUUID();
-                  edit({
-                    ...g,
-                    nodes: [
-                      ...g.nodes,
-                      {
-                        id,
-                        kind,
-                        label: kind === 'foreach' ? 'For each' : kind,
-                        position: { x: 150 + Math.random() * 100, y: 100 + Math.random() * 200 },
-                        inputs: {},
-                        ...(scope ? { parentId: scope } : {}),
-                      },
-                    ],
-                  });
-                  select(id);
-                }}
-              >
-                {kind === 'foreach' ? 'For each' : kind}
-              </button>
-            ))}
-          {scope && (
-            <Button variant="outline" onClick={() => setScope(undefined)}>
-              Back to main flow
-            </Button>
-          )}
-          <p className="text-xs text-muted-foreground">
-            Connect an output handle to the next step. Select an edge and press Delete to remove it.
-          </p>
-        </aside>
-        <main className="min-w-0 flex-1">
+        <main ref={canvasRef} tabIndex={-1} aria-label="Workflow canvas" className="min-w-0 flex-1">
           <ReactFlow
-            nodes={g.nodes
-              .filter((n) => n.parentId === scope)
-              .map((n) => ({
-                id: n.id,
-                type: 'workflow',
-                position: n.position,
-                data: { node: n },
-                selected: n.id === selected,
-              }))}
+            nodes={canvasNodes.map((n) => ({
+              id: n.id,
+              type: 'workflow',
+              position: n.position,
+              draggable: n.id !== loopStart?.id && !!perms.edit,
+              connectable: n.id !== loopStart?.id && !!perms.edit,
+              data: {
+                node: n,
+                canEdit: !!perms.edit,
+                loopStart: n.id === loopStart?.id,
+                connectedPorts: g.edges.filter((e) => e.source === n.id).map((e) => e.port),
+                onAdd: (port: Port) => {
+                  select(n.id);
+                  setNodeEditorOpen(false);
+                  setAddingStep({ sourceId: n.id, port });
+                },
+                onEdit: () => {
+                  setAddingStep(undefined);
+                  select(n.id);
+                  setNodeEditorOpen(true);
+                },
+              },
+              selected: n.id === selected,
+            }))}
             edges={g.edges
               .filter((e) => g.nodes.find((n) => n.id === e.source)?.parentId === scope)
               .map((e) => ({
@@ -522,7 +664,12 @@ export function WorkflowsPage() {
             nodeTypes={nodeTypes}
             nodesDraggable={perms.edit}
             nodesConnectable={perms.edit}
-            onNodeClick={(_, n) => select(n.id)}
+            onNodeClick={(_, n) => {
+              if (n.id === loopStart?.id) return;
+              setAddingStep(undefined);
+              select(n.id);
+              setNodeEditorOpen(true);
+            }}
             onNodesChange={(changes) => {
               if (!perms.edit) return;
               const positions = applyNodeChanges(
@@ -546,7 +693,8 @@ export function WorkflowsPage() {
               })
             }
             onConnect={(c) => {
-              if (c.source && c.target)
+              if (perms.edit && c.source && c.target && c.source !== loopStart?.id &&
+                  !g.edges.some((edge) => edge.source === c.source && edge.port === (c.sourceHandle ?? 'next')))
                 edit({
                   ...g,
                   edges: [
@@ -560,221 +708,206 @@ export function WorkflowsPage() {
                 });
             }}
             fitView
+            fitViewOptions={{ padding: 0.25 }}
           >
             <Background />
             <Controls />
-          </ReactFlow>
-        </main>
-        <aside className="w-80 shrink-0 space-y-4 overflow-auto border-l p-4">
-          <fieldset disabled={!perms.edit} className="space-y-3">
-            <label className="block text-sm">
-              Automation role
-              <select
-                className={control}
-                disabled={!perms.assignRole}
-                value={w.roleId ?? ''}
-                onChange={(e) => {
-                  setW({ ...w, roleId: e.target.value });
-                  setDirty(true);
-                }}
+            <FocusNewStep nodeId={focusStep} onDone={() => setFocusStep(undefined)} />
+            {addingStep && perms.edit && (
+              <WorkflowNodePopover
+                key={`add:${addingStep.sourceId}:${addingStep.port}`}
+                nodeId={addingStep.sourceId}
+                title={`Add step · ${addingStep.port}`}
+                canvasRef={canvasRef}
+                anchorSelector={`[data-add-port="${addingStep.port}"]`}
+                closeLabel="Close step picker"
+                onClose={() => setAddingStep(undefined)}
               >
-                <option value="">Choose role</option>
-                {meta.data.roles.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {node && (
-              <>
-                <label className="block text-sm">
-                  Step label
-                  <input
-                    className={control}
-                    value={node.label}
-                    onChange={(e) => patch({ label: e.target.value })}
-                  />
-                </label>
-                {node.kind === 'trigger' ? (
-                  <>
-                    <label className="block text-sm">
-                      Event
-                      <select
-                        className={control}
-                        value={g.trigger.event}
-                        onChange={(e) =>
-                          edit({
-                            ...g,
-                            trigger: { ...g.trigger, event: e.target.value as Graph['trigger']['event'] },
-                          })
-                        }
-                      >
-                        {['manual', 'create', 'update', 'remove'].map((e) => (
-                          <option key={e}>{e}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="block text-sm">
-                      Trigger model
-                      <select
-                        className={control}
-                        value={g.trigger.model}
-                        onChange={(e) => edit({ ...g, trigger: { ...g.trigger, model: e.target.value } })}
-                      >
-                        <option value="">Choose model</option>
-                        {meta.data.models.map((m) => (
-                          <option key={m.name} value={m.name}>
-                            {m.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </>
-                ) : (
-                  <>
-                    {['query', 'read', 'create', 'update', 'remove', 'operation'].includes(node.kind) && (
+                <div className="space-y-0.5">
+                  {stepTypes.filter((step) => !scope || step.kind !== 'foreach').map((step) => (
+                    <button
+                      key={step.kind}
+                      type="button"
+                      className="block w-full rounded-md px-3 py-1.5 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => addStep(step.kind)}
+                    >
+                      <span className="block text-sm font-medium">{step.label}</span>
+                      <span className="block text-xs text-muted-foreground">{step.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </WorkflowNodePopover>
+            )}
+            {nodeEditorOpen && node && (
+              <WorkflowNodePopover
+                key={node.id}
+                nodeId={node.id}
+                title={node.kind === 'trigger' ? 'Edit trigger' : 'Edit step'}
+                canvasRef={canvasRef}
+                onClose={() => setNodeEditorOpen(false)}
+              >
+                <fieldset key={node?.id} disabled={!perms.edit} className="min-w-0 space-y-3">
+                  {node && (
+                    <>
                       <label className="block text-sm">
-                        Model
-                        <select
+                        Step label
+                        <input
                           className={control}
-                          value={node.model ?? ''}
-                          onChange={(e) => patch({ model: e.target.value, inputs: {}, operation: undefined })}
-                        >
-                          <option value="">Choose model</option>
-                          {meta.data.models.map((m) => (
-                            <option key={m.name} value={m.name}>
-                              {m.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
-                    {node.kind === 'operation' && (
-                      <select
-                        aria-label="Operation"
-                        className={control}
-                        value={node.operation ?? ''}
-                        onChange={(e) => patch({ operation: e.target.value, inputs: {} })}
-                      >
-                        <option value="">Choose operation</option>
-                        {model?.operations.map((o) => (
-                          <option key={o.name} value={o.name}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    {node.kind === 'condition' && (
-                      <select
-                        aria-label="Condition operator"
-                        className={control}
-                        value={node.operator ?? ''}
-                        onChange={(e) => patch({ operator: e.target.value as WorkflowNode['operator'] })}
-                      >
-                        <option value="">Choose operator</option>
-                        {['equals', 'notEquals', 'greaterThan', 'lessThan', 'contains', 'exists'].map((o) => (
-                          <option key={o}>{o}</option>
-                        ))}
-                      </select>
-                    )}
-                    {node.kind === 'foreach' && (
-                      <>
-                        <label className="block text-sm">
-                          Concurrency
-                          <input
-                            className={control}
-                            type="number"
-                            min={1}
-                            max={meta.data.limits.concurrency}
-                            value={node.concurrency ?? meta.data.limits.concurrency}
-                            onChange={(e) => patch({ concurrency: Number(e.target.value) })}
-                          />
-                        </label>
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            setScope(node.id);
-                            select('');
-                          }}
-                        >
-                          Edit loop body
-                        </Button>
-                      </>
-                    )}
-                    {keys.map((key) => (
-                      <label className="block space-y-1 text-sm" key={key}>
-                        <span>{fields.find((f) => f.key === key)?.label ?? key}</span>
-                        <BindingInput
-                          value={node.inputs[key]}
-                          field={fields.find((f) => f.key === key)}
-                          options={options}
-                          onChange={(b) => {
-                            const inputs = { ...node.inputs };
-                            if (b) inputs[key] = b;
-                            else delete inputs[key];
-                            patch({ inputs });
-                          }}
+                          value={node.label}
+                          onChange={(e) => patch({ label: e.target.value })}
                         />
                       </label>
-                    ))}
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        const removed = new Set([
-                          node.id,
-                          ...g.nodes.filter((n) => n.parentId === node.id).map((n) => n.id),
-                        ]);
-                        edit({
-                          ...g,
-                          nodes: g.nodes.filter((n) => !removed.has(n.id)),
-                          edges: g.edges.filter((e) => !removed.has(e.source) && !removed.has(e.target)),
-                        });
-                        select('trigger');
-                      }}
-                    >
-                      Delete step
-                    </Button>
-                  </>
-                )}
-              </>
+                      {node.kind === 'trigger' ? (
+                        <>
+                          <label className="block text-sm">
+                            Event
+                            <select
+                              className={control}
+                              value={g.trigger.event}
+                              onChange={(e) =>
+                                edit({
+                                  ...g,
+                                  trigger: { ...g.trigger, event: e.target.value as Graph['trigger']['event'] },
+                                })
+                              }
+                            >
+                              {['manual', 'create', 'update', 'remove'].map((e) => (
+                                <option key={e}>{e}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block text-sm">
+                            Trigger model
+                            <select
+                              className={control}
+                              value={g.trigger.model}
+                              onChange={(e) => edit({ ...g, trigger: { ...g.trigger, model: e.target.value } })}
+                            >
+                              <option value="">Choose model</option>
+                              {meta.data.models.map((m) => (
+                                <option key={m.name} value={m.name}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </>
+                      ) : (
+                        <>
+                          {['query', 'read', 'create', 'update', 'remove', 'operation'].includes(node.kind) && (
+                            <label className="block text-sm">
+                              Model
+                              <select
+                                className={control}
+                                value={node.model ?? ''}
+                                onChange={(e) => patch({ model: e.target.value, inputs: {}, operation: undefined })}
+                              >
+                                <option value="">Choose model</option>
+                                {meta.data.models.map((m) => (
+                                  <option key={m.name} value={m.name}>
+                                    {m.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+                          {node.kind === 'operation' && (
+                            <select
+                              aria-label="Operation"
+                              className={control}
+                              value={node.operation ?? ''}
+                              onChange={(e) => patch({ operation: e.target.value, inputs: {} })}
+                            >
+                              <option value="">Choose operation</option>
+                              {model?.operations.map((o) => (
+                                <option key={o.name} value={o.name}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          {node.kind === 'condition' && (
+                            <select
+                              aria-label="Condition operator"
+                              className={control}
+                              value={node.operator ?? ''}
+                              onChange={(e) => patch({ operator: e.target.value as WorkflowNode['operator'] })}
+                            >
+                              <option value="">Choose operator</option>
+                              {['equals', 'notEquals', 'greaterThan', 'lessThan', 'contains', 'exists'].map((o) => (
+                                <option key={o}>{o}</option>
+                              ))}
+                            </select>
+                          )}
+                          {node.kind === 'foreach' && (
+                            <>
+                              <label className="block text-sm">
+                                Concurrency
+                                <input
+                                  className={control}
+                                  type="number"
+                                  min={1}
+                                  max={meta.data.limits.concurrency}
+                                  value={node.concurrency ?? meta.data.limits.concurrency}
+                                  onChange={(e) => patch({ concurrency: Number(e.target.value) })}
+                                />
+                              </label>
+                              <Button
+                                variant="outline"
+                                onClick={() => {
+                                  setScope(node.id);
+                                  setFocusStep(g.nodes.find((step) => step.parentId === node.id)?.id ?? `loop-start:${node.id}`);
+                                  select('');
+                                  setNodeEditorOpen(false);
+                                }}
+                              >
+                                Edit loop body
+                              </Button>
+                            </>
+                          )}
+                          {keys.map((key) => (
+                            <label className="block space-y-1 text-sm" key={key}>
+                              <span>{fields.find((f) => f.key === key)?.label ?? key}</span>
+                              <BindingInput
+                                value={node.inputs[key]}
+                                field={fields.find((f) => f.key === key)}
+                                options={options}
+                                onChange={(b) => {
+                                  const inputs = { ...node.inputs };
+                                  if (b) inputs[key] = b;
+                                  else delete inputs[key];
+                                  patch({ inputs });
+                                }}
+                              />
+                            </label>
+                          ))}
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              const removed = new Set([
+                                node.id,
+                                ...g.nodes.filter((n) => n.parentId === node.id).map((n) => n.id),
+                              ]);
+                              edit({
+                                ...g,
+                                nodes: g.nodes.filter((n) => !removed.has(n.id)),
+                                edges: g.edges.filter((e) => !removed.has(e.source) && !removed.has(e.target)),
+                              });
+                              select('trigger');
+                              setNodeEditorOpen(false);
+                            }}
+                          >
+                            Delete step
+                          </Button>
+                        </>
+                      )}
+                    </>
+                  )}
+                </fieldset>
+              </WorkflowNodePopover>
             )}
-          </fieldset>
-          {perms.run && (
-            <div className="space-y-2 border-t pt-3">
-              <strong className="text-sm">Manual run</strong>
-              <p className="text-xs text-muted-foreground">
-                Runs perform real actions using the automation role.
-              </p>
-              <input
-                aria-label="Trigger record ID"
-                className={control}
-                placeholder="Trigger record ID"
-                value={recordId}
-                onChange={(e) => setRecordId(e.target.value)}
-              />
-              <label className="flex gap-2 text-sm">
-                <input type="checkbox" checked={draftRun} onChange={(e) => setDraftRun(e.target.checked)} />
-                Test saved draft
-              </label>
-              <Button
-                disabled={busy || dirty}
-                onClick={() =>
-                  void perform(async () => {
-                    const r = await api<Run>(`/${w.id}/run`, 'POST', {
-                      draft: draftRun,
-                      recordId: recordId || undefined,
-                    });
-                    setRunId(r.id);
-                    setMessage('Run queued. The dispatcher picks it up within a minute.');
-                  })
-                }
-              >
-                Run workflow
-              </Button>
-            </div>
-          )}
-        </aside>
+          </ReactFlow>
+        </main>
       </div>
       {perms.viewRuns && (
         <section className="max-h-52 overflow-auto border-t p-3">
