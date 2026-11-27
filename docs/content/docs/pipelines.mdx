@@ -69,7 +69,7 @@ Each of these marks the pipeline's write boundary.
 A pipeline function typically does one of:
 
 - **Read from `ctx.db`** to check external state (stock, quota, uniqueness beyond what a DB constraint gives you) and throw a `PipelineError` if a precondition fails.
-- **Mutate `ctx.input`** before `persist` runs — e.g. `applyDiscount` recalculating `amount`, or `hashPassword` (see [Auth](/docs/auth)) replacing a plaintext `password` key with a `passwordHash` column.
+- **Mutate `ctx.input`** before `persist` runs — e.g. `applyDiscount` recalculating `amount`, or a step hashing a plaintext `secret` key into a `secretHash` column.
 - **Act on `ctx.doc`** after `persist` — e.g. `notify` sending an email now that the row exists and is committed.
 
 ```ts

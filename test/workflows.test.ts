@@ -85,7 +85,7 @@ beforeEach(async () => {
     ).id,
   );
   serviceId = String(
-    (await insertRow(db, User, { email: 'service@test', passwordHash: '!', active: false, roleId })).id,
+    (await insertRow(db, User, { email: 'service@test', name: '', active: false, roleId })).id,
   );
   runtime = new WorkflowRuntime(db, registry, { adapter: 'inngest', appId: 'test' });
 });

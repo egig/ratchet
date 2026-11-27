@@ -20,7 +20,7 @@ export interface WebSession {
  */
 export interface WebLoaderContext {
   db: AnyDb;
-  /** the resolved session (same `ratchet_session` cookie the console/API use), or null */
+  /** the resolved session (same better-auth `ratchet.session_token` cookie the console/API use), or null */
   session: WebSession | null;
   /** name -> `ModelDefinition` map, as `serve.ts` builds it */
   registry: Record<string, ModelDefinition>;

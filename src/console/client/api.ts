@@ -62,6 +62,8 @@ type ClientRolePermissions = Record<string, Record<string, ClientActionGrant>>;
 export interface AuthUser {
   id: string;
   email: string;
+  name?: string | null;
+  image?: string | null;
   roleId: string | null;
   active: boolean;
   permissions: ClientRolePermissions;
@@ -80,22 +82,59 @@ export function setup(input: SetupInput): Promise<{ user: AuthUser; token: strin
   return request('/api/auth/setup', { method: 'POST', body: JSON.stringify(input) });
 }
 
-export function login(email: string, password: string): Promise<{ user: AuthUser; token: string }> {
-  return request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+/** better-auth's own endpoints (`/api/auth/sign-in/email`, ...) answer errors as a flat
+ * `{ code, message }` and successes as a bare object — not Ratchet's `{ error }`/`{ data }`
+ * envelopes — so they get their own helper, normalizing failures into the same `ApiRequestError`. */
+async function authRequest<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`/api/auth${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    // empty body
+  }
+  if (!res.ok) {
+    const err = (json ?? {}) as { code?: string; message?: string };
+    throw new ApiRequestError(res.status, { error: { code: err.code ?? 'UNKNOWN_ERROR', message: err.message } });
+  }
+  return json as T;
 }
 
-export function logout(): Promise<null> {
-  return request('/api/auth/logout', { method: 'POST' });
+export function login(email: string, password: string): Promise<{ token: string }> {
+  return authRequest('/sign-in/email', { email, password });
+}
+
+export function logout(): Promise<{ success: boolean }> {
+  return authRequest('/sign-out', {});
 }
 
 export function me(): Promise<AuthUser> {
   return request('/api/auth/me');
 }
 
-/** Self-service profile edit (`PATCH /api/auth/me`) — only `email`/`password` are accepted
- * server-side. Returns the same `{ id, email, roleId, active, permissions }` shape `me()` does. */
-export function updateProfile(input: { email?: string; password?: string }): Promise<AuthUser> {
-  return request('/api/auth/me', { method: 'PATCH', body: JSON.stringify(input) });
+export interface ProfileInput {
+  email?: string;
+  /** required by better-auth to change the password */
+  currentPassword?: string;
+  newPassword?: string;
+}
+
+/** Self-service profile edit through better-auth (`/change-email`, `/change-password`), then a
+ * fresh `me()`. Privileged fields (`roleId`/`active`) aren't writable here at all. */
+export async function updateProfile(input: ProfileInput): Promise<AuthUser> {
+  if (input.email) await authRequest('/change-email', { newEmail: input.email });
+  if (input.newPassword) {
+    await authRequest('/change-password', {
+      currentPassword: input.currentPassword ?? '',
+      newPassword: input.newPassword,
+      revokeOtherSessions: true,
+    });
+  }
+  return me();
 }
 
 export function listModels(): Promise<ConsoleModelMeta[]> {

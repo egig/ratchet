@@ -1,25 +1,63 @@
 import type { AnyDb } from '../core/db.js';
 import type { ModelDefinition } from '../core/model.js';
 import { pipe, validate, persist, PipelineError, type PipelineFn } from '../core/pipeline.js';
+import { insertRow, updateRow } from '../core/persistence.js';
 import { hashPassword as hashPasswordValue } from './password.js';
-import { findSessionByToken, findUserById, listPermissionsForRole, type ActionGrant, type RolePermissions, type UserRow } from './lookup.js';
+import { Account } from './models/account.model.js';
+import {
+  findCredentialAccountId,
+  findSessionByToken,
+  findUserById,
+  listPermissionsForRole,
+  type ActionGrant,
+  type RolePermissions,
+  type UserRow,
+} from './lookup.js';
 import { resolveSessionToken } from './cookie.js';
 
 export type { ActionGrant, RolePermissions } from './lookup.js';
 
 
-/** If `ctx.input.password` (plaintext) is present, replaces it with the model's real
- * `passwordHash` column before `validate` runs — a no-op when there's nothing to hash (e.g. a
- * `PATCH` that isn't touching the password). */
-export const hashPassword: PipelineFn = async (ctx) => {
-  const { password, ...rest } = ctx.input;
-  if (typeof password !== 'string') return ctx;
-  return { ...ctx, input: { ...rest, passwordHash: await hashPasswordValue(password) } };
-};
+/** better-auth's own defaults (`emailAndPassword.minPasswordLength`/`maxPasswordLength`), applied
+ * to `setPassword` too so an admin can't set a password the sign-in form would have refused. */
+export const MIN_PASSWORD_LENGTH = 8;
+export const MAX_PASSWORD_LENGTH = 128;
 
-/** Resolves a `Bearer` token to a live session + active user. Shared by the `requireAuth`
- * pipeline fn and the plain route handlers in `src/auth/router.ts` (e.g. `GET /me`) so both paths
- * apply the exact same session/expiry/active checks. Throws 401 UNAUTHENTICATED otherwise. */
+/** Upserts `userId`'s `credential` account (better-auth's email/password sign-in row) with a fresh
+ * hash of `password`. Shared by `User`'s `setPassword` operation and `provisionRootAdmin`. */
+export async function writeCredentialPassword(db: AnyDb, userId: string, password: string): Promise<void> {
+  if (password.length < MIN_PASSWORD_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
+    throw new PipelineError({
+      code: 'VALIDATION_ERROR',
+      status: 400,
+      fields: { password: `must be ${MIN_PASSWORD_LENGTH}-${MAX_PASSWORD_LENGTH} characters` },
+    });
+  }
+  const hash = await hashPasswordValue(password);
+  const existing = await findCredentialAccountId(db, userId);
+  if (existing) await updateRow(db, Account, existing, { password: hash });
+  else await insertRow(db, Account, { userId, accountId: userId, providerId: 'credential', password: hash }, userId);
+}
+
+/** `User.operations.setPassword` — the admin path for giving a user a password (the console's
+ * "Set password" button). Self-service changes go through better-auth's `/api/auth/change-password`,
+ * which requires the current password. Runs in one transaction with the prefetched user row (`pipe`),
+ * so an unknown id 404s and the response is the user, not the account. */
+export const setPassword: PipelineFn = pipe(async (ctx) => {
+  const password = ctx.input.password;
+  if (typeof password !== 'string') {
+    throw new PipelineError({ code: 'VALIDATION_ERROR', status: 400, fields: { password: 'required' } });
+  }
+  await writeCredentialPassword(ctx.db, ctx.doc!.id as string, password);
+  return ctx;
+});
+
+/** Resolves the request's better-auth session (Bearer header or session cookie — see
+ * `resolveSessionToken`) to a live session + active user. Shared by the `requireAuth` pipeline fn and
+ * every plain route handler (console, automation, workflows) so all of them apply the exact same
+ * session/expiry/active checks. Reads `sessions` directly rather than going through the better-auth
+ * instance, so it works on any `AnyDb` handle — including a pipeline's transaction. Throws 401
+ * UNAUTHENTICATED otherwise. */
 export async function resolveSessionUser(db: AnyDb, request: Request | undefined): Promise<UserRow> {
   const token = resolveSessionToken(request);
   if (!token) throw new PipelineError({ code: 'UNAUTHENTICATED', status: 401, message: 'missing bearer token or session cookie' });
@@ -144,9 +182,8 @@ export function pickGrantedFields(model: ModelDefinition, row: Record<string, un
 }
 
 /** Maps a raw write-input key back to the `model.fields` key it actually writes — mainly for
- * `writeAs` (e.g. `User`'s `password` input key writes the real `passwordHash` field), so a role
- * denied write access to `passwordHash` can't route around that denial through its `writeAs`
- * alias. A key that isn't a real field at all resolves to `undefined` and is ignored by
+ * `writeAs` (e.g. a `secret` input key that writes a real `secretHash` field), so a role denied
+ * write access to `secretHash` can't route around that denial through its `writeAs` alias. A key that isn't a real field at all resolves to `undefined` and is ignored by
  * `assertWriteFieldsAllowed` — `validate`'s schema silently strips it same as always. */
 export function fieldKeyForInput(model: ModelDefinition, inputKey: string): string | undefined {
   if (inputKey in model.fields) return inputKey;

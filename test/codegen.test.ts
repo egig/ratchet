@@ -62,10 +62,10 @@ describe('generate() against a self-contained model fixture', () => {
 
   it('emits a schema with §4 conventions: timestamptz, partial unique index, CHECK, RESTRICT FK', async () => {
     const { modelCount } = await generate({ modelsDir, generatedDir });
-    // 2 user models + 3 built-in auth models (User/Role/Session) + 4 built-in
+    // 2 user models + 5 built-in auth models (User/Role/Session/Account/Verification) + 4 built-in
     // automation models (Agent/Chat/Message/Provider) + 2 built-in workspace
     // models (Workspace/WorkspaceView) + 5 workflow models — built-ins are always present.
-    expect(modelCount).toBe(16);
+    expect(modelCount).toBe(18);
 
     const schemaSrc = await import('node:fs/promises').then((fs) =>
       fs.readFile(path.join(generatedDir, 'schema.ts'), 'utf8'),

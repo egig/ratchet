@@ -4,6 +4,7 @@ import { App } from '../router/http-app.js';
 import { createApiRouter } from '../router/create-router.js';
 import { createSiteAssetsRouter } from '../router/site-assets.js';
 import { createAuthRouter } from '../auth/router.js';
+import type { AuthConfig } from '../auth/better-auth.js';
 import { createAutomationRouter } from '../automation/router.js';
 import { assertValidConsolePath } from './console-path.js';
 import type { ModelDefinition } from '../core/model.js';
@@ -47,6 +48,9 @@ export interface RatchetAppOptions {
   /** default `'development'`. In `'production'`, `/api/auth/setup` 404s unconditionally instead
    * of exposing whether a root admin exists — see `resolveEnv` (`core/config.ts`). */
   env?: 'development' | 'production';
+  /** better-auth options (`FrameworkConfig.auth`): social providers, email callbacks, plugins, the
+   * secret/baseURL — see `AuthConfig` (src/auth/better-auth.ts). */
+  auth?: AuthConfig;
 }
 
 /**
@@ -88,7 +92,7 @@ export async function createRatchetApp(opts: RatchetAppOptions): Promise<App> {
   //                                   console so a `consolePath: '/'` can't shadow it
   //   consolePath                   — the admin SPA
   //   /_ratchet · /                 — the web app (catch-all), only when opts.web is supplied
-  app.route('/api/auth', createAuthRouter(db, { env: opts.env ?? 'development' }));
+  app.route('/api/auth', createAuthRouter(db, { env: opts.env ?? 'development', config: opts.auth }));
   app.route('/api/automation', createAutomationRouter(db, models));
   app.route('/api', createApiRouter(models, db, storage));
   app.route('/_site-assets', createSiteAssetsRouter(db, storage, domains));

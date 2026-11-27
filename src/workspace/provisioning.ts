@@ -41,11 +41,12 @@ async function cloneWorkspaceViews(
 }
 
 /**
- * Composed onto the end of `User`'s `create` pipelines (`auth/models/user.model.ts`'s
- * `User.operations.create` and `registerPipeline`) so every new account starts with somewhere to
+ * Composed onto the end of `User.operations.create` (`auth/models/user.model.ts`) and run from
+ * better-auth's `databaseHooks.user.create.after` (`auth/better-auth.ts`, self-signup and social
+ * sign-in), so every new account starts with somewhere to
  * open workspace views/chat, instead of the console's workspace switcher (WorkspacePage.tsx)
  * showing empty until the user creates one by hand. Reads `ctx.doc.id` — the just-persisted
- * `User` row's id — rather than `ctx.user`, since `registerPipeline` runs unauthenticated (no
+ * `User` row's id — rather than `ctx.user`, since self-signup runs unauthenticated (no
  * `ctx.user` yet) and self-creates the account it should provision for. Runs post-commit (after
  * `persist`, the pipeline's write boundary — core/pipeline.ts), so a failure here can't roll back
  * the user creation itself, and non-transactionally, so it can't be folded into the same insert.
@@ -54,7 +55,7 @@ async function cloneWorkspaceViews(
  * `workspaceTemplateId` (`auth/models/role.model.ts`), that template's `WorkspaceView` tabs are
  * cloned onto the new workspace, so the user lands on a view suited to their role. Both are
  * optional (e.g. a self-registered account has no `roleId` yet, and a permissions-only role may
- * have no template), so a blank workspace stays the common case for `/register`. The workspace is
+ * have no template), so a blank workspace stays the common case for self-signup. The workspace is
  * always named `DEFAULT_WORKSPACE_NAME` regardless of role.
  */
 export const createDefaultWorkspace: PipelineFn = async (ctx) => {

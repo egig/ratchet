@@ -40,7 +40,9 @@ ratchet build
 DATABASE_URL=postgres://... PORT=3000 node dist/server.js
 ```
 
-Same code path as `ratchet serve`, just without Bun/dev tooling at runtime — this bundle runs on plain Node.
+Same code path as `ratchet serve`, just without Bun/dev tooling at runtime — this bundle runs on plain Node. When `ratchet.config.ts` sets `auth`, the config module is bundled into `dist/server.js` and evaluated at startup, so its `process.env` reads happen there.
+
+Every target needs `BETTER_AUTH_SECRET` (required in production — see [Auth](/docs/auth#configuration)) and should set `BETTER_AUTH_URL` to its public origin. On Cloudflare, env vars are bindings rather than `process.env`, so the Worker template passes them as `auth: { secret, baseURL }`.
 
 ## Vercel
 

@@ -25,39 +25,31 @@ export async function findSessionByToken(db: AnyDb, token: string): Promise<Sess
   return rows[0] ? (rowToCamelCase(rows[0]) as unknown as SessionRow) : null;
 }
 
-export async function insertSession(db: AnyDb, id: string, userId: string, token: string, expiresAt: Date, now: Date): Promise<SessionRow> {
+/** The id of `userId`'s email/password (`providerId: 'credential'`) account, if they have one. */
+export async function findCredentialAccountId(db: AnyDb, userId: string): Promise<string | null> {
   const rows = await db.execute(
-    sql`INSERT INTO sessions (id, user_id, token, expires_at, created_at, updated_at, created_by_id)
-        VALUES (${id}, ${userId}, ${token}, ${expiresAt.toISOString()}, ${now.toISOString()}, ${now.toISOString()}, ${userId})
-        RETURNING id, user_id, token, expires_at`,
+    sql`SELECT id FROM accounts WHERE user_id = ${userId} AND provider_id = 'credential' AND deleted_at IS NULL LIMIT 1`,
   );
-  const row = rows[0];
-  if (!row) throw new Error('insertSession: insert returned no row');
-  return rowToCamelCase(row) as unknown as SessionRow;
-}
-
-export async function deleteSessionByToken(db: AnyDb, token: string): Promise<void> {
-  await db.run(sql`DELETE FROM sessions WHERE token = ${token}`);
+  return rows[0] ? (rows[0].id as string) : null;
 }
 
 export interface UserRow {
   id: string;
   email: string;
-  passwordHash: string;
   roleId: string | null;
   active: boolean;
 }
 
 export async function findUserById(db: AnyDb, id: string): Promise<UserRow | null> {
   const rows = await db.execute(
-    sql`SELECT id, email, password_hash, role_id, active FROM users WHERE id = ${id} AND deleted_at IS NULL LIMIT 1`,
+    sql`SELECT id, email, role_id, active FROM users WHERE id = ${id} AND deleted_at IS NULL LIMIT 1`,
   );
   return rows[0] ? (rowToCamelCase(rows[0]) as unknown as UserRow) : null;
 }
 
 export async function findUserByEmail(db: AnyDb, email: string): Promise<UserRow | null> {
   const rows = await db.execute(
-    sql`SELECT id, email, password_hash, role_id, active FROM users WHERE email = ${email} AND deleted_at IS NULL LIMIT 1`,
+    sql`SELECT id, email, role_id, active FROM users WHERE email = ${email} AND deleted_at IS NULL LIMIT 1`,
   );
   return rows[0] ? (rowToCamelCase(rows[0]) as unknown as UserRow) : null;
 }

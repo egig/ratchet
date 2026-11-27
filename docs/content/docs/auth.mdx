@@ -1,50 +1,155 @@
 ---
 title: Auth
-description: Session-based auth, root admin onboarding, and roles/permissions.
+description: better-auth sign-in (email/password, social, plugins), root admin onboarding, and roles/permissions.
 ---
 
-`ratchet/auth` provides session-based authentication (`User`, `Role`, `Session` models, plus a router and pipeline helpers) that `ratchet serve` mounts at `/api/auth`, ahead of the generic `/api/:model` router. A role's entire grant tree lives on the `Role.permissions` json column — there is no separate `Permission` model.
+Authentication is [better-auth](https://www.better-auth.com), mounted at `/api/auth` ahead of the generic `/api/:model` router. Ratchet adds three things on top of it: its own database adapter (better-auth's tables are ordinary Ratchet models), root-admin onboarding, and roles/permissions. A role's entire grant tree lives on the `Role.permissions` json column — there is no separate `Permission` model.
+
+`ratchet/auth` ships five built-in models in the `auth` Domain:
+
+| Model | Table | |
+|---|---|---|
+| `User` | `users` | `email`, `name`, `emailVerified`, `image` (better-auth's), plus `roleId` and `active` (Ratchet's) |
+| `Role` | `roles` | name, description, workspace template, and the `permissions` tree |
+| `Session` | `sessions` | one row per signed-in device; hidden from the console |
+| `Account` | `accounts` | one row per sign-in method: `credential` (email/password hash) or an OAuth provider; hidden |
+| `Verification` | `verifications` | email-verification and password-reset tokens, OAuth state; hidden |
+
+`ratchet generate` migrates them like any other model.
 
 ## Endpoints
+
+Ratchet's own routes:
 
 | Method | Path | |
 |---|---|---|
 | `GET` | `/api/auth/setup` | whether a root admin still needs to be created |
-| `POST` | `/api/auth/setup` | one-time bootstrap: create the root admin |
-| `POST` | `/api/auth/register` | create a user, issue a session |
-| `POST` | `/api/auth/login` | verify credentials, issue a session |
-| `POST` | `/api/auth/logout` | invalidate the current session |
-| `GET` | `/api/auth/me` | current user + their permissions |
-| `PATCH` | `/api/auth/me` | update your own `email` / `password` |
+| `POST` | `/api/auth/setup` | one-time bootstrap: create the root admin and sign them in |
+| `GET` | `/api/auth/me` | current user + their role's resolved `permissions` |
 
-`setup`, `register`, and `login` all return `{ data: { user, token } }` (setup's `GET` returns `{ data: { required } }` instead) and set an `HttpOnly` session cookie (`Secure` when the request is HTTPS). The console SPA relies on the cookie; non-browser clients can instead send `Authorization: Bearer <token>`.
+Everything else under `/api/auth` is better-auth's handler. The ones the console uses:
 
-`PATCH /api/auth/me` is self-service: any signed-in user can change their own `email` and `password` without the `users:update` permission that gates admin-driven edits through `PATCH /api/users/:id`. Only those two keys are honoured — `roleId`, `active`, and everything else are ignored — and the write still runs through the `User` model's own `update` pipeline (`hashPassword` + `validate`). It returns the same `{ data: <user + permissions> }` shape as `GET /me`. The console exposes it as the **Edit profile** page (`/profile`), linked from the account menu in both the sidebar and the workspace header.
+| Method | Path | Body |
+|---|---|---|
+| `POST` | `/api/auth/sign-up/email` | `{ email, password, name }` |
+| `POST` | `/api/auth/sign-in/email` | `{ email, password }` |
+| `POST` | `/api/auth/sign-out` | `{}` |
+| `POST` | `/api/auth/change-email` | `{ newEmail }` |
+| `POST` | `/api/auth/change-password` | `{ currentPassword, newPassword, revokeOtherSessions? }` |
+| `GET` | `/api/auth/get-session` | |
 
-## Root admin onboarding
+The full list (social sign-in, password reset, email verification, session management, and whatever plugins add) is in [better-auth's API reference](https://www.better-auth.com/docs/concepts/api). better-auth's endpoints answer with a bare JSON object (`{ token, user }` on sign-in) and errors as `{ code, message }`; Ratchet's own routes use the usual `{ data }` / `{ error }` envelopes.
 
-A fresh instance has no users, so `requirePermission` would lock everyone out with no way to grant the first permission. `POST /api/auth/setup` closes that gap: it's unauthenticated, but only works once — it checks whether any user already holds a `*:*` permission (`permissions['*']['*']`) and 409s (`SETUP_ALREADY_COMPLETE`) if so. Otherwise it creates (or reuses) a `Root` role with `permissions: { '*': { '*': { fields: '*', scope: 'any' } } }`, creates the submitted user under that role, and signs them in — the same shape as `register`/`login`.
-
-The same request also provisions the framework's first built-in `Agent`, named `Ratchet`, with `roleId` set to that same `Root` role — so it can call every tool from turn one (see "Agents derive their tools from a `Role`" below). `Agent.providerId` starts out `null`: connecting a Model Provider is a separate step, done from the chat UI's empty-state (or the Providers admin screen) once you're logged in, not part of this form.
-
-The console SPA's `AuthProvider` checks `GET /api/auth/setup` on boot alongside `/me`. While a root admin doesn't yet exist, every console route redirects to its `/setup` route (a form styled like the login page, with a confirm-password field) instead of `/login`; once it's created, `/setup` itself renders a generic not-found page rather than redirecting to `/login`, so a completed instance gives nothing away either.
-
-Root status is keyed off the permission, not user count — a user created through public `/register` (below) has no role and no permissions, so it doesn't count, and `/register` itself is unaffected by whether setup has run.
-
-**In production** (`FrameworkConfig.env` resolving to `'production'`, either set explicitly or inferred from `NODE_ENV`), both `GET` and `POST /api/auth/setup` 404 unconditionally — the same response an unmatched route would produce — so the endpoint never reveals whether a root admin exists. Bootstrap the first admin there with [`ratchet create-admin`](/docs/cli#ratchet-create-admin) instead, which writes directly to the database rather than going over HTTP.
+Sign-in sets an `HttpOnly` cookie named `ratchet.session_token` (`__Secure-` prefixed over HTTPS). The console relies on the cookie. Non-browser clients send `Authorization: Bearer <token>` instead, using the `token` from the sign-in response (the `bearer` plugin is always on).
 
 ```sh
-curl -X POST http://localhost:3000/api/auth/register \
+curl -X POST http://localhost:3000/api/auth/sign-up/email \
   -H 'Content-Type: application/json' \
-  -d '{"email":"a@example.com","password":"hunter2"}'
+  -d '{"email":"a@example.com","password":"correct-horse","name":"Ada"}'
 
 curl http://localhost:3000/api/auth/me \
   -H 'Authorization: Bearer <token>'
 ```
 
+Passwords must be 8–128 characters (better-auth's defaults; override with `auth.emailAndPassword.minPasswordLength`/`maxPasswordLength`). Sessions last 7 days and slide forward when used (better-auth's `session.expiresIn`/`updateAge`).
+
+The console's **Edit profile** page (`/profile`) uses `/change-email` and `/change-password`. Changing a password requires the current one and signs out every other session. `roleId` and `active` are declared to better-auth as `input: false`, so neither `/sign-up/email` nor `/update-user` can set them; a role is only ever granted through `PATCH /api/users/:id`.
+
+## Configuration
+
+Set `auth` in `ratchet.config.ts`. It takes [better-auth's options](https://www.better-auth.com/docs/reference/options) as-is:
+
+```ts
+import { defineConfig } from '@egig/ratchet/core';
+
+export default defineConfig({
+  db: { driver: 'sqlite', url: 'file:./local.db' },
+  auth: {
+    socialProviders: {
+      github: {
+        clientId: process.env.GITHUB_CLIENT_ID!,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+      },
+    },
+    emailVerification: {
+      sendVerificationEmail: async ({ user, url }) => {
+        // send `url` to `user.email` with your mail provider
+      },
+    },
+  },
+});
+```
+
+A social sign-in starts from `POST /api/auth/sign-in/social` with `{ provider: 'github', callbackURL }`; the provider redirects back to `/api/auth/callback/github`. Register that callback URL with the provider.
+
+Two environment variables matter in production:
+
+- **`BETTER_AUTH_SECRET`** signs cookies and tokens. It is **required** when `NODE_ENV=production`: better-auth refuses to start with its built-in development secret. Generate one with `openssl rand -base64 32`.
+- **`BETTER_AUTH_URL`** is the app's public origin (`https://app.example.com`). Without it better-auth derives the origin from each request and logs a warning; OAuth callbacks need it to be right.
+
+Ratchet sets these options itself, and they can't be overridden: the database adapter, `basePath` (`/api/auth`), the cookie prefix (`ratchet`), uuidv7 ids, the password hasher, the `roleId`/`active` user fields, and the `bearer` plugin. `databaseHooks.user.create.after` and `databaseHooks.session.create.before` are supported; yours run after Ratchet's own hook for the same event. Telemetry is off unless you set `auth.telemetry.enabled`.
+
+### Plugins
+
+`auth.plugins` is appended to Ratchet's `bearer` plugin. What works depends on the plugin's schema:
+
+- **No schema of its own** (`customSession`, `openAPI`, `oneTimeToken`, `magicLink`, `emailOTP`, …): works as-is. Plugins that store short-lived values use the built-in `verifications` table.
+- **New tables only** (`jwt`, `siwe`, …): declare each table as a model under `models/` so `ratchet generate` migrates it. The table name is better-auth's model name, pluralized with an `s` and snake-cased (`fooBar` → `foo_bars`); field names are snake-cased the same way. Don't declare `createdAt`/`updatedAt` — every Ratchet table already has them. Read the plugin's schema for the exact fields.
+- **New columns on `user`, `session`, or `account`** (`twoFactor`, `admin`, `organization`, `username`, `anonymous`, `phoneNumber`, …): not supported yet. Those three are built-in models, and a project can't add fields to them.
+
+## How sessions reach the rest of the app
+
+`/api/auth/me` goes through better-auth's own `getSession`. Every other check — the generic router, the console metadata API, `/api/automation`, workflows, web loaders, and `requireAuth` in a pipeline — resolves the session straight from the `sessions` table: it reads the Bearer header or the session cookie, looks the token up, checks expiry, and loads the user (which must be `active` and not soft-deleted). That works on any database handle, including a pipeline's open transaction.
+
+better-auth signs its cookie as `<token>.<hmac>`. Those direct lookups strip the signature without verifying it; the token itself is a 32-character random secret that must exist in `sessions`, so the HMAC adds no protection there. better-auth's own endpoints still verify it.
+
+A deactivated user (`active = false`) can't start a session by any method (sign-in fails with `403 ACCOUNT_INACTIVE`), and their existing sessions stop resolving immediately. A soft-deleted user can't sign in at all.
+
 ## How passwords are handled
 
-The `User` model never declares a plaintext `password` field. Instead its `passwordHash` column declares `writeAs: 'password'`, and the `hashPassword` pipeline function intercepts `ctx.input.password`, hashes it, and rewrites it as `passwordHash` before `validate` runs. `passwordHash` itself is `sensitive: true`, so it's never present in a response.
+A password is never stored on the user row. It's the `password` column of the user's `credential` row in `accounts`, written by better-auth on sign-up and password change. The hash is Ratchet's PBKDF2-SHA256 (600,000 iterations, Web Crypto), not better-auth's scrypt default, so it runs unchanged on Node, Bun, and Workers, and hashes from before the better-auth migration keep verifying. Every secret column on `Account`, `Session`, and `Verification` is `sensitive`, so none is ever returned by the REST API.
+
+An admin sets a user's password with the `setPassword` operation — the **Set password** button on a user in the console, or:
+
+```sh
+curl -X POST http://localhost:3000/api/users/<id>/setPassword \
+  -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' \
+  -d '{"password":"new-password"}'
+```
+
+It needs the `users:setPassword` grant, creates the `credential` account if the user has none (a user created from the console starts without one), and leaves the user's existing sessions alone.
+
+## Root admin onboarding
+
+A fresh instance has no users, so `requirePermission` would lock everyone out with no way to grant the first permission. `POST /api/auth/setup` closes that gap: it's unauthenticated, but only works once — it checks whether any user already holds a `*:*` permission (`permissions['*']['*']`) and 409s (`SETUP_ALREADY_COMPLETE`) if so. Otherwise it creates (or reuses) a `Root` role with `permissions: { '*': { '*': { fields: '*', scope: 'any' } } }`, creates the submitted user and their `credential` account under that role, and signs them in through better-auth, returning `{ data: { user, token } }` with the session cookie set.
+
+The same request also provisions the framework's first built-in `Agent`, named `Ratchet`, with `roleId` set to that same `Root` role — so it can call every tool from turn one (see "Agents derive their tools from a `Role`" below). `Agent.providerId` starts out `null`: connecting a Model Provider is a separate step, done from the chat UI's empty-state (or the Providers admin screen) once you're logged in, not part of this form.
+
+The console SPA's `AuthProvider` checks `GET /api/auth/setup` on boot alongside `/me`. While a root admin doesn't yet exist, every console route redirects to its `/setup` route (a form styled like the login page, with a confirm-password field) instead of `/login`; once it's created, `/setup` itself renders a generic not-found page rather than redirecting to `/login`, so a completed instance gives nothing away either.
+
+Root status is keyed off the permission, not user count — a user created through public `/sign-up/email` has no role and no permissions, so it doesn't count, and sign-up itself is unaffected by whether setup has run. To turn public sign-up off, set `auth: { emailAndPassword: { disableSignUp: true } }`.
+
+**In production** (`FrameworkConfig.env` resolving to `'production'`, either set explicitly or inferred from `NODE_ENV`), both `GET` and `POST /api/auth/setup` 404 unconditionally — the same response an unmatched route would produce — so the endpoint never reveals whether a root admin exists. Bootstrap the first admin there with [`ratchet create-admin`](/docs/cli#ratchet-create-admin) instead, which writes directly to the database rather than going over HTTP.
+
+## Upgrading from the built-in auth
+
+Before better-auth, passwords were a `password_hash` column on `users` and the session cookie was `ratchet_session`. `ratchet generate` produces a migration that adds the new columns and tables and drops `users.password_hash`. Before applying it, edit the generated SQL file so the hashes are copied into `accounts` after `accounts` is created and before `password_hash` is dropped:
+
+```sql
+-- Postgres
+INSERT INTO accounts (id, created_at, updated_at, user_id, account_id, provider_id, password)
+SELECT gen_random_uuid(), created_at, updated_at, id, id, 'credential', password_hash
+FROM users WHERE password_hash IS NOT NULL;
+UPDATE users SET email = lower(email);
+
+-- SQLite
+INSERT INTO accounts (id, created_at, updated_at, user_id, account_id, provider_id, password)
+SELECT lower(hex(randomblob(16))), created_at, updated_at, id, id, 'credential', password_hash
+FROM users WHERE password_hash IS NOT NULL;
+UPDATE users SET email = lower(email);
+```
+
+better-auth looks emails up lowercased, so the `UPDATE` keeps mixed-case addresses able to sign in (check for addresses that differ only by case first). Existing password hashes verify unchanged. Browser sessions under the old cookie name end, so everyone signs in once more; API clients' existing Bearer tokens keep working until they expire. Any client that called `/api/auth/register`, `/login`, `/logout`, or `PATCH /api/auth/me` must move to the better-auth endpoints above.
 
 ## Auth + permission is implicit on the generic router
 
@@ -104,7 +209,7 @@ This is **secure-by-default, with no implicit "all fields"**: a role with a `(re
 Two things are always exempt from field-level permission, for every role:
 
 - **Auto-injected system columns** (`id`, `createdAt`, `updatedAt`, `deletedAt`, `createdById`) — they aren't declarable via `field.*` in the first place, and gating them would break pagination cursors, `?include=`, and file-field URLs for no security benefit.
-- **`sensitive: true`** fields (e.g. a password hash) — that's a separate, absolute, non-role-based redaction: it never reaches *any* role, whereas field permission is about fields that are fine for some roles but not others.
+- **`sensitive: true`** fields (e.g. `Account.password`) — that's a separate, absolute, non-role-based redaction: it never reaches *any* role, whereas field permission is about fields that are fine for some roles but not others.
 
 `?include=`d relations are filtered by the same field grant, using the requesting role's `read` permission on the *related* model — embedding a row via `?include=` can't be used to see fields that model's own permission denies.
 
@@ -116,7 +221,7 @@ Two things are always exempt from field-level permission, for every role:
 
 Ownership is entirely role-driven, not baked into a model's pipeline — `create-router.ts` and `automation/tool.ts`'s agent-tool executor both resolve the caller's `scope` for the action being invoked and enforce it automatically (`core/pipeline.ts`'s `ownerFieldOf`/`forceOwnerOnCreate`/`assertOwnsRow`) before a model's own pipeline ever runs. `create` always force-sets the owner to the requester regardless of `scope` — there's no "create on someone else's behalf" capability. A model author never wires an ownership check by hand.
 
-> An "admin" role that should see everything on a resource needs `scope: 'any'` there explicitly — e.g. `{ roles: { update: { fields: '*', scope: 'any' } } }` to let a role manage *any* `Role` row, not just ones it created itself.
+> An "admin" role that should see everything on a resource needs `scope: 'any'` there explicitly — e.g. `{ roles: { update: { fields: '*', scope: 'any' } } }` to let a role manage *any* `Role` row, not just ones it created itself. The same goes for `users: { setPassword: { scope: 'any' } }`: users who signed themselves up have no `createdById`, so an `'own'`-scoped grant reaches none of them.
 
 ### Bootstrapping
 

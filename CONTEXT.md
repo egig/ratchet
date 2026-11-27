@@ -8,7 +8,7 @@ Ratchet is a backend framework where a declared `Model` drives the Postgres tabl
 A single declarative unit (`defineModel()`) that owns one Postgres table, its fields, and its create/update/remove pipelines. Drives the REST API and console UI for that table.
 
 **Domain**:
-A named grouping of related Models that share a console sidebar section and a set of Domain Settings — e.g. `auth` groups the User/Role/Permission/Session models. A Model's Domain is inferred from the top-level subdirectory it's declared in under `modelsDir` (`models/auth/*.model.ts` → domain `auth`); a Model declared directly under `modelsDir`, with no subdirectory, belongs to no Domain. Framework built-in models are assigned a Domain explicitly, since they aren't scanned from the app's `modelsDir`.
+A named grouping of related Models that share a console sidebar section and a set of Domain Settings — e.g. `auth` groups the User/Role/Session/Account/Verification models. A Model's Domain is inferred from the top-level subdirectory it's declared in under `modelsDir` (`models/auth/*.model.ts` → domain `auth`); a Model declared directly under `modelsDir`, with no subdirectory, belongs to no Domain. Framework built-in models are assigned a Domain explicitly, since they aren't scanned from the app's `modelsDir`.
 _Avoid_: Module, Feature, Package
 
 **Domain Settings**:

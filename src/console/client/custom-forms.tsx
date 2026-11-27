@@ -13,7 +13,7 @@ export interface BoundField {
   meta: ConsoleFieldMeta;
   /** the key `value`/`onChange` (passed to `.render()`) and the eventual save payload should use
    * for this field — `field.writeAs ?? field.key`. A `sensitive`+`writeAs` field (e.g. a
-   * password, reported as `passwordHash` with `writeAs: 'password'`) submits under a different
+   * secret reported as `secretHash` with `writeAs: 'secret'`) submits under a different
    * key than its column name; every other field's `inputKey` is just its own `key`. */
   inputKey: string;
   /** renders this field's built-in editor — the same control the generated form uses (a

@@ -17,7 +17,7 @@ export interface ConsoleFieldMeta {
   hideInTable: boolean;
   default?: unknown;
   /** present only on a sensitive field that's writable under a different key — e.g.
-   * `passwordHash` (sensitive, never read back) reports `writeAs: 'password'`. */
+   * `Provider.apiKey` (sensitive, never read back) reports `writeAs: 'apiKey'`. */
   writeAs?: string;
   maxLength?: number;
   precision?: number;
@@ -107,7 +107,7 @@ export function humanize(name: string): string {
 }
 
 /** Splits a camelCase field key into words and capitalizes the first letter of each — e.g.
- * `roleId` -> "Role Id", `passwordHash` -> "Password Hash". */
+ * `roleId` -> "Role Id", `emailVerified` -> "Email Verified". */
 function humanizeFieldKey(key: string): string {
   return key
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')

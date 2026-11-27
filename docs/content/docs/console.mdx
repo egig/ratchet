@@ -63,7 +63,7 @@ Set these under `console` in `defineModel`:
 ```ts
 export const Session = defineModel('sessions', {
   fields: { /* ... */ },
-  console: { hidden: true }, // managed only through /api/auth/*, not the console CRUD views
+  console: { hidden: true }, // managed only by better-auth (/api/auth/*), not the console CRUD views
 });
 
 export const Customer = defineModel('customers', {
@@ -75,7 +75,7 @@ export const Customer = defineModel('customers', {
 });
 ```
 
-A `field.reference(...)` on a model automatically renders as a dropdown in the generated form, populated from the target model's rows and labeled with its `displayField`. A field with `sensitive: true` (e.g. `passwordHash`) never round-trips to the client; one with `writeAs` submits under its declared input key instead of its column name; one with `displayText` uses that as its list/form label instead of a humanized field key (see [Common options](/docs/models#common-options)).
+A `field.reference(...)` on a model automatically renders as a dropdown in the generated form, populated from the target model's rows and labeled with its `displayField`. A field with `sensitive: true` (e.g. `Account.password`) never round-trips to the client; one with `writeAs` submits under its declared input key instead of its column name; one with `displayText` uses that as its list/form label instead of a humanized field key (see [Common options](/docs/models#common-options)).
 
 ## List view
 

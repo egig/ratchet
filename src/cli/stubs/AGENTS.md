@@ -34,7 +34,7 @@ bun run seed         # load sample data from seed.ts (dev already does this)
 | `logic/` | plain TypeScript helpers shared by routes and models | yes |
 | `seed.ts` | sample data, loaded by `dev` and `seed` | yes |
 | `public/` | static files served as-is | yes |
-| `ratchet.config.ts` | database, folders, console path | rarely |
+| `ratchet.config.ts` | database, folders, console path, `auth` (better-auth options) | rarely |
 | `.ratchet/` | **generated**, rewritten on every sync | **never** |
 | `migrations/` | generated SQL for production | never by hand |
 | `local.db` | the local SQLite database | delete it to start fresh |
@@ -181,6 +181,24 @@ export default function Blog() {
   `new Date().toISOString()` instead.
 - Site settings: `getWebContext(context).settings.get('website')`.
 - The page shell (header, nav, footer) is `routes/root.tsx`.
+
+### Add sign-in with GitHub, Google, ...
+
+Sign-in is [better-auth](https://www.better-auth.com), mounted at `/api/auth`. Add providers under
+`auth` in `ratchet.config.ts`; the options are better-auth's own:
+
+```ts
+auth: {
+  socialProviders: {
+    github: { clientId: process.env.GITHUB_CLIENT_ID!, clientSecret: process.env.GITHUB_CLIENT_SECRET! },
+  },
+},
+```
+
+Register `<origin>/api/auth/callback/github` with the provider. Production needs
+`BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `BETTER_AUTH_URL` (the public origin) set.
+Don't add a password column or a sessions table yourself: users, sessions, and sign-in accounts
+are built in. A better-auth plugin that adds columns to `user`/`session` isn't supported yet.
 
 ### Add admin-editable settings
 
