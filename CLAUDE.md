@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Ratchet (`@egig/ratchet`) is a model-driven backend framework. A directory of `*.model.ts` files is
 scanned at codegen time and drives, from one declaration per table: the Drizzle schema (SQLite via
 libsql by default, Postgres also supported — see [ADR 0004](docs/adr/0004-sqlite-libsql-second-db-driver.md)),
-Zod validators, a generic REST API, a React admin console SPA, and session auth. Custom logic hooks
+Zod validators, a generic REST API, a React admin console SPA, and better-auth sign-in
+([ADR 0005](docs/adr/0005-better-auth.md)). Custom logic hooks
 in as composable `pipe(...)` chains around `validate`/`persist`.
 
 The repo ships the framework (`src/`), its docs site (`docs/`), and a working consumer app used for
@@ -166,7 +167,7 @@ Each is a self-contained set of builtin models + a router + pipeline helpers, wi
 
 | Path | What |
 | --- | --- |
-| `src/auth/` | User/Role/Permission/Session, `/api/auth/*` (register/login/logout/me/setup), cookie/token/password helpers, `presetFields()` |
+| `src/auth/` | better-auth (ADR 0005): User/Role/Session/Account/Verification models, `adapter.ts` (better-auth storage over `AnyDb`), `better-auth.ts` (fixed options + `FrameworkConfig.auth` passthrough), `/api/auth/*` (Ratchet's `/setup` + `/me`, the rest delegated to better-auth), session-token resolution, PBKDF2 hasher, `presetFields()` |
 | `src/automation/` | `Agent`/`Provider`/`Chat`/`Message`, `/api/automation/*`, agent tool exposure + turn runner. Chat uses assistant-ui (`useDataStreamRuntime`) + `assistant-stream`; vendored+restyled components in `src/console/client/chat/`. `Message.content` is a JSON parts blob. See [docs-internal/](docs-internal/) for the re-architecture plan. |
 | `src/workspace/` | `Workspace` model + saved views; console right-panel |
 | `src/web/` | the consumer's own `routes/**/*.tsx` React Router data-mode site — SSR + client bundle + the `/` catch-all; `/_site-assets/*` (`src/router/site-assets.ts`) serves public `field.file` Domain Settings values. There is no built-in `website` domain — `ratchet init` scaffolds `models/website/` (Page/Contact/settings) as consumer source. |

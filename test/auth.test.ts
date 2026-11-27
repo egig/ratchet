@@ -8,9 +8,11 @@ import { generateId } from '../src/core/id.js';
 import { insertRow } from '../src/core/persistence.js';
 import type { OperationContext } from '../src/core/pipeline.js';
 import { hashPassword, verifyPassword } from '../src/auth/password.js';
-import { hashPassword as hashPasswordPipeline, presetFields } from '../src/auth/pipeline.js';
+import { presetFields } from '../src/auth/pipeline.js';
+import { resolveSessionToken } from '../src/auth/cookie.js';
 import { User, Role, Session } from '../src/auth/models/index.js';
 import { createAuthRouter } from '../src/auth/router.js';
+import { App } from '../src/router/http-app.js';
 import { createApiRouter } from '../src/router/create-router.js';
 import { createConsoleRouter } from '../src/console/router.js';
 import { createNodeFsAssetSource } from '../src/console/node-assets.js';
@@ -28,22 +30,22 @@ describe('password hashing (src/auth/password.ts)', () => {
   });
 });
 
-describe('hashPassword pipeline fn (src/auth/pipeline.ts)', () => {
-  function ctx(input: Record<string, unknown>): OperationContext {
-    return { operation: 'create', input, doc: null, model: User, db: {} as never };
-  }
+describe('resolveSessionToken (src/auth/cookie.ts)', () => {
+  const req = (headers: Record<string, string>) => new Request('http://localhost/', { headers });
 
-  it('replaces a plaintext `password` with a `passwordHash`', async () => {
-    const result = await hashPasswordPipeline(ctx({ email: 'a@b.com', password: 'hunter2' }));
-    expect(result.input.password).toBeUndefined();
-    expect(typeof result.input.passwordHash).toBe('string');
-    expect(await verifyPassword('hunter2', result.input.passwordHash as string)).toBe(true);
+  it('reads a raw Bearer token, and strips the signature from a signed one', () => {
+    expect(resolveSessionToken(req({ authorization: 'Bearer abc123' }))).toBe('abc123');
+    expect(resolveSessionToken(req({ authorization: 'bearer abc123.c2lnbmF0dXJl' }))).toBe('abc123');
   });
 
-  it('is a no-op when there is no `password` to hash', async () => {
-    const input = { email: 'a@b.com' };
-    const result = await hashPasswordPipeline(ctx(input));
-    expect(result.input).toEqual(input);
+  it("reads better-auth's session cookie, plain or __Secure- prefixed, URL-encoded and signed", () => {
+    expect(resolveSessionToken(req({ cookie: 'a=1; ratchet.session_token=tok.sig%3D' }))).toBe('tok');
+    expect(resolveSessionToken(req({ cookie: '__Secure-ratchet.session_token=tok2.sig' }))).toBe('tok2');
+  });
+
+  it('prefers the Bearer header over the cookie, and returns null when neither is present', () => {
+    expect(resolveSessionToken(req({ authorization: 'Bearer head', cookie: 'ratchet.session_token=cook.sig' }))).toBe('head');
+    expect(resolveSessionToken(req({ cookie: 'other=1' }))).toBeNull();
   });
 });
 
@@ -53,8 +55,8 @@ const describeIfDb = connectionString ? describe : describe.skip;
 describeIfDb('auth system (against a live Postgres)', () => {
   let client: postgres.Sql;
   let db: AnyDb;
-  let authApp: ReturnType<typeof createAuthRouter>;
-  let prodAuthApp: ReturnType<typeof createAuthRouter>;
+  let authApp: App;
+  let prodAuthApp: App;
   let apiApp: ReturnType<typeof createApiRouter>;
   let consoleApp: ReturnType<typeof createConsoleRouter>;
 
@@ -105,12 +107,26 @@ describeIfDb('auth system (against a live Postgres)', () => {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS users (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        email varchar NOT NULL, password_hash varchar NOT NULL, role_id uuid, active boolean NOT NULL DEFAULT true
+        email varchar NOT NULL, name varchar, email_verified boolean NOT NULL DEFAULT false, image varchar,
+        role_id uuid, active boolean NOT NULL DEFAULT true
       )`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS sessions (
         id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
-        user_id uuid NOT NULL, token varchar NOT NULL, expires_at timestamptz NOT NULL
+        user_id uuid NOT NULL, token varchar NOT NULL, expires_at timestamptz NOT NULL, ip_address varchar, user_agent text
+      )`);
+    // better-auth's own tables (src/auth/models/account.model.ts, verification.model.ts).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS accounts (
+        id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
+        user_id uuid NOT NULL, account_id varchar NOT NULL, provider_id varchar NOT NULL, password text,
+        access_token text, refresh_token text, id_token text, access_token_expires_at timestamptz,
+        refresh_token_expires_at timestamptz, scope text
+      )`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS verifications (
+        id uuid PRIMARY KEY, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL, deleted_at timestamptz, created_by_id uuid,
+        identifier varchar NOT NULL, value text NOT NULL, expires_at timestamptz NOT NULL
       )`);
     // setup also provisions the built-in `Ratchet` `Agent` (providerId: null — src/auth/provisioning.ts)
     // alongside the root role/user, so `agents` needs to exist for that insert to succeed, even
@@ -152,8 +168,13 @@ describeIfDb('auth system (against a live Postgres)', () => {
         chat_enabled boolean NOT NULL DEFAULT true
       )`);
 
-    authApp = createAuthRouter(db);
-    prodAuthApp = createAuthRouter(db, { env: 'production' });
+    // mounted at `/api/auth` exactly as `createRatchetApp` does — better-auth's handler matches on
+    // the full path (its `basePath`).
+    const secret = 'test-secret-test-secret-test-secret-0123';
+    authApp = new App();
+    authApp.route('/api/auth', createAuthRouter(db, { config: { secret, baseURL: 'http://localhost' } }));
+    prodAuthApp = new App();
+    prodAuthApp.route('/api/auth', createAuthRouter(db, { env: 'production', config: { secret, baseURL: 'http://localhost' } }));
     apiApp = createApiRouter({ roles: Role, users: User, notes: Note, lockable_docs: LockableDoc }, db);
     consoleApp = createConsoleRouter(
       createNodeFsAssetSource('.ratchet-test'),
@@ -165,13 +186,15 @@ describeIfDb('auth system (against a live Postgres)', () => {
 
   beforeEach(async () => {
     // `workspaces` is deliberately not truncated here — see the beforeAll note above.
-    await db.execute(sql`TRUNCATE TABLE notes, lockable_docs, sessions, users, roles, agents, providers`);
+    await db.execute(sql`TRUNCATE TABLE notes, lockable_docs, sessions, accounts, verifications, users, roles, agents, providers`);
   });
 
   afterAll(async () => {
     await db.execute(sql`DROP TABLE IF EXISTS lockable_docs`);
     await db.execute(sql`DROP TABLE IF EXISTS notes`);
     await db.execute(sql`DROP TABLE IF EXISTS sessions`);
+    await db.execute(sql`DROP TABLE IF EXISTS accounts`);
+    await db.execute(sql`DROP TABLE IF EXISTS verifications`);
     await db.execute(sql`DROP TABLE IF EXISTS agents`);
     await db.execute(sql`DROP TABLE IF EXISTS providers`);
     await db.execute(sql`DROP TABLE IF EXISTS users`);
@@ -179,38 +202,49 @@ describeIfDb('auth system (against a live Postgres)', () => {
     await client.end();
   });
 
-  function setupBody(email: string, password = 'hunter2'): string {
+  const PW = 'password-1';
+
+  function setupBody(email: string, password = 'hunter2-hunter2'): string {
     return JSON.stringify({ email, password });
   }
 
-  async function registerUser(email: string, password: string) {
-    const res = await authApp.request('/register', {
+  function post(path: string, body: Record<string, unknown>, headers: Record<string, string> = {}) {
+    return authApp.request(`/api/auth${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
     });
-    const body = (await res.json()) as { data: { user: Record<string, unknown>; token: string } };
-    return { res, ...body.data };
+  }
+
+  /** better-auth's `/sign-up/email` — returns `{ token, user }` directly (no `{ data }` envelope). */
+  async function registerUser(email: string, password: string = PW) {
+    const res = await post('/sign-up/email', { email, password, name: '' });
+    const body = (await res.json()) as { user: Record<string, unknown>; token: string };
+    return { res, ...body };
+  }
+
+  function signIn(email: string, password: string) {
+    return post('/sign-in/email', { email, password });
   }
 
   describe('root admin onboarding (src/auth/router.ts POST/GET /setup)', () => {
     it('GET /setup reports required until a root admin is created, then never again', async () => {
-      const before = await authApp.request('/setup');
+      const before = await authApp.request('/api/auth/setup');
       expect(((await before.json()) as { data: { required: boolean } }).data.required).toBe(true);
 
-      const create = await authApp.request('/setup', {
+      const create = await authApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('root@example.com'),
       });
       expect(create.status).toBe(201);
 
-      const after = await authApp.request('/setup');
+      const after = await authApp.request('/api/auth/setup');
       expect(((await after.json()) as { data: { required: boolean } }).data.required).toBe(false);
     });
 
     it('the created user can immediately act on any resource (roles:create) with no prior grant', async () => {
-      const setup = await authApp.request('/setup', {
+      const setup = await authApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('root2@example.com'),
@@ -226,13 +260,13 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it('a second setup attempt 409s once a root admin exists', async () => {
-      await authApp.request('/setup', {
+      await authApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('root3@example.com'),
       });
 
-      const second = await authApp.request('/setup', {
+      const second = await authApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('someone-else@example.com'),
@@ -242,7 +276,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it('deactivating the root admin does not reopen setup', async () => {
-      const setup = await authApp.request('/setup', {
+      const setup = await authApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('root4@example.com'),
@@ -251,12 +285,12 @@ describeIfDb('auth system (against a live Postgres)', () => {
 
       await db.execute(sql`UPDATE users SET active = false WHERE id = ${user.id}`);
 
-      const status = await authApp.request('/setup');
+      const status = await authApp.request('/api/auth/setup');
       expect(((await status.json()) as { data: { required: boolean } }).data.required).toBe(false);
     });
 
     it('reuses the same Root role + *:* permission on a fresh instance instead of duplicating it', async () => {
-      await authApp.request('/setup', {
+      await authApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('root5@example.com'),
@@ -270,7 +304,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it('provisions the built-in Ratchet Agent with no Provider, wired to the Root role', async () => {
-      await authApp.request('/setup', {
+      await authApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('root8@example.com'),
@@ -292,9 +326,9 @@ describeIfDb('auth system (against a live Postgres)', () => {
 
   describe('/setup is disguised as missing in production (src/auth/router.ts)', () => {
     it('GET and POST /setup both 404, regardless of whether a root admin exists yet', async () => {
-      const beforeGet = await prodAuthApp.request('/setup');
+      const beforeGet = await prodAuthApp.request('/api/auth/setup');
       expect(beforeGet.status).toBe(404);
-      const beforePost = await prodAuthApp.request('/setup', {
+      const beforePost = await prodAuthApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('prod-root@example.com'),
@@ -303,26 +337,35 @@ describeIfDb('auth system (against a live Postgres)', () => {
 
       // ... and still 404s once a root admin exists (created out-of-band, the way `ratchet
       // create-admin` would in a real deploy).
-      await authApp.request('/setup', {
+      await authApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('prod-root2@example.com'),
       });
-      const afterGet = await prodAuthApp.request('/setup');
+      const afterGet = await prodAuthApp.request('/api/auth/setup');
       expect(afterGet.status).toBe(404);
     });
   });
 
-  it('register creates a user + session and never returns passwordHash', async () => {
-    const { res, user, token } = await registerUser('ada@example.com', 'hunter2');
-    expect(res.status).toBe(201);
+  it('sign-up creates a user + session and never returns password data', async () => {
+    const { res, user, token } = await registerUser('ada@example.com');
+    expect(res.status).toBe(200);
     expect(user.email).toBe('ada@example.com');
+    expect(user.password).toBeUndefined();
     expect(user.passwordHash).toBeUndefined();
     expect(typeof token).toBe('string');
+
+    // the password lives on a better-auth `credential` account, hashed with Ratchet's PBKDF2 format
+    const accounts = (await db.execute(
+      sql`SELECT provider_id, account_id, password FROM accounts WHERE user_id = ${user.id}`,
+    )) as unknown as { provider_id: string; account_id: string; password: string }[];
+    expect(accounts.length).toBe(1);
+    expect(accounts[0]!.provider_id).toBe('credential');
+    expect(accounts[0]!.password).toMatch(/^pbkdf2:/);
   });
 
-  it('register also provisions a blank default Workspace (workspace/provisioning.ts) — a fresh account has no roleId yet', async () => {
-    const { user } = await registerUser('workspace-on-register@example.com', 'hunter2');
+  it('sign-up also provisions a blank default Workspace (workspace/provisioning.ts) — a fresh account has no roleId yet', async () => {
+    const { user } = await registerUser('workspace-on-register@example.com');
 
     const rows = (await db.execute(
       sql`SELECT name FROM workspaces WHERE user_id = ${user.id}`,
@@ -330,56 +373,99 @@ describeIfDb('auth system (against a live Postgres)', () => {
     expect(rows).toEqual([{ name: 'My Workspace' }]);
   });
 
-  it('login succeeds with the right password and fails with the wrong one', async () => {
+  it("sign-up can't claim a role or set `active` — both are better-auth `input: false` fields", async () => {
+    const roleId = generateId();
+    const now = new Date().toISOString();
+    await db.execute(sql`INSERT INTO roles (id, created_at, updated_at, name) VALUES (${roleId}, ${now}, ${now}, 'admin')`);
+
+    const res = await post('/sign-up/email', { email: 'climber@example.com', password: PW, name: '', roleId, active: false });
+    const rows = (await db.execute(sql`SELECT role_id, active FROM users WHERE email = 'climber@example.com'`)) as unknown as {
+      role_id: string | null;
+      active: boolean;
+    }[];
+    // better-auth either rejects the body outright or drops the fields — never applies them
+    if (res.ok) expect(rows[0]).toEqual({ role_id: null, active: true });
+    else expect(rows.length).toBe(0);
+  });
+
+  it('sign-in succeeds with the right password and fails with the wrong one', async () => {
     await registerUser('grace@example.com', 'right-password');
 
-    const good = await authApp.request('/login', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: 'grace@example.com', password: 'right-password' }),
-    });
+    const good = await signIn('grace@example.com', 'right-password');
     expect(good.status).toBe(200);
-    const goodBody = (await good.json()) as { data: { token: string } };
-    expect(typeof goodBody.data.token).toBe('string');
+    expect(typeof ((await good.json()) as { token: string }).token).toBe('string');
 
-    const bad = await authApp.request('/login', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: 'grace@example.com', password: 'nope' }),
-    });
+    const bad = await signIn('grace@example.com', 'nope-nope-nope');
     expect(bad.status).toBe(401);
-    expect(((await bad.json()) as { error: { code: string } }).error.code).toBe('INVALID_CREDENTIALS');
+    expect(((await bad.json()) as { code: string }).code).toBe('INVALID_EMAIL_OR_PASSWORD');
   });
 
-  it('GET /me requires a valid bearer token and reflects the logged-in user', async () => {
-    const { token } = await registerUser('me@example.com', 'pw');
+  it('a deactivated user cannot sign in, and their existing session stops resolving', async () => {
+    const { token, user } = await registerUser('inactive@example.com');
+    await db.execute(sql`UPDATE users SET active = false WHERE id = ${user.id}`);
 
-    const noAuth = await authApp.request('/me');
+    const res = await signIn('inactive@example.com', PW);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { code: string }).code).toBe('ACCOUNT_INACTIVE');
+
+    const me = await authApp.request('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
+    expect(me.status).toBe(401);
+    const api = await apiApp.request('/roles', { headers: { authorization: `Bearer ${token}` } });
+    expect(api.status).toBe(401);
+  });
+
+  it('a soft-deleted user cannot sign in (the adapter only sees live rows)', async () => {
+    const { user } = await registerUser('deleted@example.com');
+    await db.execute(sql`UPDATE users SET deleted_at = now() WHERE id = ${user.id}`);
+    const res = await signIn('deleted@example.com', PW);
+    expect(res.status).toBe(401);
+  });
+
+  it('a password hashed before the better-auth migration still verifies', async () => {
+    const userId = generateId();
+    const now = new Date().toISOString();
+    await db.execute(sql`INSERT INTO users (id, created_at, updated_at, email, name) VALUES (${userId}, ${now}, ${now}, 'legacy@example.com', '')`);
+    await db.execute(
+      sql`INSERT INTO accounts (id, created_at, updated_at, user_id, account_id, provider_id, password)
+          VALUES (${generateId()}, ${now}, ${now}, ${userId}, ${userId}, 'credential', ${await hashPassword('legacy-password')})`,
+    );
+    const res = await signIn('legacy@example.com', 'legacy-password');
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /me requires a valid session and reflects the signed-in user', async () => {
+    const { token } = await registerUser('me@example.com');
+
+    const noAuth = await authApp.request('/api/auth/me');
     expect(noAuth.status).toBe(401);
 
-    const authed = await authApp.request('/me', { headers: { authorization: `Bearer ${token}` } });
+    const authed = await authApp.request('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
     expect(authed.status).toBe(200);
-    const body = (await authed.json()) as { data: { email: string } };
+    const body = (await authed.json()) as { data: { email: string; roleId: string | null; active: boolean } };
     expect(body.data.email).toBe('me@example.com');
+    expect(body.data.roleId).toBeNull();
+    expect(body.data.active).toBe(true);
   });
 
-  it('logout invalidates the session', async () => {
-    const { token } = await registerUser('bye@example.com', 'pw');
+  it('sign-out invalidates the session', async () => {
+    const { token } = await registerUser('bye@example.com');
 
-    const before = await authApp.request('/me', { headers: { authorization: `Bearer ${token}` } });
+    const before = await authApp.request('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
     expect(before.status).toBe(200);
 
-    const logout = await authApp.request('/logout', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
-    expect(logout.status).toBe(200);
+    const signOut = await post('/sign-out', {}, { authorization: `Bearer ${token}` });
+    expect(signOut.status).toBe(200);
 
-    const after = await authApp.request('/me', { headers: { authorization: `Bearer ${token}` } });
+    const after = await authApp.request('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
     expect(after.status).toBe(401);
+    const api = await apiApp.request('/roles', { headers: { authorization: `Bearer ${token}` } });
+    expect(api.status).toBe(401);
   });
 
-  it('GET /me includes the resolved permissions for the caller\'s role', async () => {
-    const { token, user } = await registerUser('perms@example.com', 'pw');
+  it("GET /me includes the resolved permissions for the caller's role", async () => {
+    const { token, user } = await registerUser('perms@example.com');
 
-    const noRole = await authApp.request('/me', { headers: { authorization: `Bearer ${token}` } });
+    const noRole = await authApp.request('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
     expect(((await noRole.json()) as { data: { permissions: Record<string, unknown> } }).data.permissions).toEqual({});
 
     const roleId = generateId();
@@ -389,178 +475,156 @@ describeIfDb('auth system (against a live Postgres)', () => {
     );
     await db.execute(sql`UPDATE users SET role_id = ${roleId} WHERE id = ${user.id}`);
 
-    const withRole = await authApp.request('/me', { headers: { authorization: `Bearer ${token}` } });
-    const body = (await withRole.json()) as { data: { permissions: Record<string, Record<string, unknown>> } };
+    const withRole = await authApp.request('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
+    const body = (await withRole.json()) as { data: { roleId: string; permissions: Record<string, Record<string, unknown>> } };
+    expect(body.data.roleId).toBe(roleId);
     expect(body.data.permissions).toEqual({ invoices: { list: {} } });
   });
 
-  describe('PATCH /me (self-service profile edit, src/auth/router.ts)', () => {
-    it('requires a valid session', async () => {
-      const res = await authApp.request('/me', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'x@example.com' }),
-      });
-      expect(res.status).toBe(401);
-    });
+  describe('self-service profile (better-auth /change-email, /change-password, /update-user)', () => {
+    it("changes the caller's own email", async () => {
+      const { token } = await registerUser('before@example.com');
 
-    it('updates the caller\'s own email and returns the fresh user (no passwordHash)', async () => {
-      const { token } = await registerUser('before@example.com', 'pw');
-
-      const res = await authApp.request('/me', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: 'after@example.com' }),
-      });
+      const res = await post('/change-email', { newEmail: 'after@example.com' }, { authorization: `Bearer ${token}` });
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { data: { email: string; passwordHash?: string; permissions: Record<string, unknown> } };
-      expect(body.data.email).toBe('after@example.com');
-      expect(body.data.passwordHash).toBeUndefined();
-      expect(typeof body.data.permissions).toBe('object');
 
-      const me = await authApp.request('/me', { headers: { authorization: `Bearer ${token}` } });
+      const me = await authApp.request('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
       expect(((await me.json()) as { data: { email: string } }).data.email).toBe('after@example.com');
     });
 
-    it('changes the password (new one logs in, old one stops working) and keeps the current session', async () => {
-      const { token } = await registerUser('pwchange@example.com', 'old-pw');
+    it('changes the password only with the current one (new one signs in, old one stops working)', async () => {
+      const { token } = await registerUser('pwchange@example.com', 'old-password');
 
-      const res = await authApp.request('/me', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ password: 'new-pw' }),
-      });
+      const wrong = await post(
+        '/change-password',
+        { currentPassword: 'not-the-password', newPassword: 'new-password' },
+        { authorization: `Bearer ${token}` },
+      );
+      expect(wrong.ok).toBe(false);
+
+      const res = await post(
+        '/change-password',
+        { currentPassword: 'old-password', newPassword: 'new-password' },
+        { authorization: `Bearer ${token}` },
+      );
       expect(res.status).toBe(200);
 
-      // existing session still valid — token-based, not password-derived
-      const stillMe = await authApp.request('/me', { headers: { authorization: `Bearer ${token}` } });
-      expect(stillMe.status).toBe(200);
-
-      const withNew = await authApp.request('/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'pwchange@example.com', password: 'new-pw' }),
-      });
-      expect(withNew.status).toBe(200);
-
-      const withOld = await authApp.request('/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'pwchange@example.com', password: 'old-pw' }),
-      });
-      expect(withOld.status).toBe(401);
+      expect((await signIn('pwchange@example.com', 'new-password')).status).toBe(200);
+      expect((await signIn('pwchange@example.com', 'old-password')).status).toBe(401);
     });
 
-    it('rejects an empty patch', async () => {
-      const { token } = await registerUser('empty@example.com', 'pw');
-      const res = await authApp.request('/me', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
-      });
-      expect(res.status).toBe(400);
-    });
-
-    it('ignores privilege fields — roleId/active can\'t be changed through this route', async () => {
-      const { token, user } = await registerUser('noescalate@example.com', 'pw');
+    it("can't change privilege fields — roleId/active aren't writable through /update-user", async () => {
+      const { token, user } = await registerUser('noescalate@example.com');
 
       const roleId = generateId();
       const now = new Date().toISOString();
       await db.execute(sql`INSERT INTO roles (id, created_at, updated_at, name) VALUES (${roleId}, ${now}, ${now}, 'admin')`);
 
-      const res = await authApp.request('/me', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: 'noescalate2@example.com', roleId, active: false }),
-      });
-      expect(res.status).toBe(200);
+      await post('/update-user', { name: 'Still Me', roleId, active: false }, { authorization: `Bearer ${token}` });
 
       const row = (await db.execute(
         sql`SELECT role_id, active FROM users WHERE id = ${user.id}`,
       )) as unknown as { role_id: string | null; active: boolean }[];
       expect(row[0]).toEqual({ role_id: null, active: true });
     });
+  });
 
-    it('rejects an email already taken by another user with a field error', async () => {
-      await registerUser('taken@example.com', 'pw');
-      const { token } = await registerUser('mover@example.com', 'pw');
+  describe('User.operations.setPassword (admin password reset, src/auth/pipeline.ts)', () => {
+    it("needs the `users:setPassword` grant, then sets a password the target user can sign in with", async () => {
+      const admin = await registerUser('pw-admin@example.com');
+      const target = await registerUser('pw-target@example.com');
+      const call = (password: string) =>
+        apiApp.request(`/users/${target.user.id}/setPassword`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${admin.token}` },
+          body: JSON.stringify({ password }),
+        });
 
-      const res = await authApp.request('/me', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: 'taken@example.com' }),
+      expect((await call('admin-chosen-1')).status).toBe(403);
+
+      await grantRole(admin.user.id as string, [{ resource: 'users', action: 'setPassword', scope: 'any' }]);
+      const res = await call('admin-chosen-1');
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { data: { id: string } }).data.id).toBe(target.user.id as string);
+
+      expect((await signIn('pw-target@example.com', 'admin-chosen-1')).status).toBe(200);
+      expect((await signIn('pw-target@example.com', PW)).status).toBe(401);
+
+      const short = await call('short');
+      expect(short.status).toBe(400);
+      expect(((await short.json()) as { error: { fields: Record<string, string> } }).error.fields.password).toBeTruthy();
+    });
+
+    it('creates the credential account for a user who has none (e.g. created from the console)', async () => {
+      const admin = await registerUser('pw-admin2@example.com');
+      await grantRole(admin.user.id as string, [{ resource: 'users', action: 'setPassword', scope: 'any' }]);
+      const created = await insertRow(db, User, { email: 'no-password@example.com', name: '' });
+
+      const res = await apiApp.request(`/users/${created.id}/setPassword`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${admin.token}` },
+        body: JSON.stringify({ password: 'first-password' }),
       });
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as { error: { code: string; fields?: Record<string, string> } };
-      expect(body.error.fields?.email).toBeTruthy();
+      expect(res.status).toBe(200);
+      expect((await signIn('no-password@example.com', 'first-password')).status).toBe(200);
     });
   });
 
   describe('cookie-based session (admin SPA transport)', () => {
     function cookieFromSetHeader(res: Response): string {
-      const raw = res.headers.get('set-cookie');
-      expect(raw).toBeTruthy();
-      return raw!.split(';')[0]!;
+      const cookie = res.headers.getSetCookie().find((c) => c.startsWith('ratchet.session_token='));
+      expect(cookie).toBeTruthy();
+      return cookie!.split(';')[0]!;
     }
 
-    it('login sets an HttpOnly session cookie usable in place of the Authorization header', async () => {
-      await registerUser('cookie@example.com', 'pw');
-      const res = await authApp.request('/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'cookie@example.com', password: 'pw' }),
-      });
+    it('sign-in sets an HttpOnly session cookie usable in place of the Authorization header', async () => {
+      await registerUser('cookie@example.com');
+      const res = await signIn('cookie@example.com', PW);
       expect(res.status).toBe(200);
-      const setCookie = res.headers.get('set-cookie')!;
-      expect(setCookie).toMatch(/^ratchet_session=/);
+      const setCookie = res.headers.getSetCookie().find((c) => c.startsWith('ratchet.session_token='))!;
       expect(setCookie).toMatch(/HttpOnly/i);
       expect(setCookie).toMatch(/SameSite=Lax/i);
       // plain http:// in tests — Secure must not be set, or the browser would drop the cookie entirely.
       expect(setCookie).not.toMatch(/Secure/i);
 
       const cookie = cookieFromSetHeader(res);
-      const me = await authApp.request('/me', { headers: { cookie } });
+      const me = await authApp.request('/api/auth/me', { headers: { cookie } });
       expect(me.status).toBe(200);
+      // the generic API resolves the same (signed) cookie straight from `sessions`
+      const api = await apiApp.request('/roles', { headers: { cookie } });
+      expect(api.status).toBe(403); // authenticated, just no `roles:read` grant
     });
 
     it('a Bearer header takes precedence over a cookie when both are present', async () => {
-      const a = await registerUser('a@example.com', 'pw');
-      const b = await registerUser('b@example.com', 'pw');
-      const bCookieRes = await authApp.request('/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'b@example.com', password: 'pw' }),
-      });
-      const bCookie = cookieFromSetHeader(bCookieRes);
+      const a = await registerUser('a@example.com');
+      await registerUser('b@example.com');
+      const bCookie = cookieFromSetHeader(await signIn('b@example.com', PW));
 
-      const res = await authApp.request('/me', {
-        headers: { authorization: `Bearer ${a.token}`, cookie: bCookie },
-      });
+      const res = await authApp.request('/api/auth/me', { headers: { authorization: `Bearer ${a.token}`, cookie: bCookie } });
       expect(res.status).toBe(200);
       expect(((await res.json()) as { data: { email: string } }).data.email).toBe('a@example.com');
     });
 
-    it('logout works from the cookie alone and clears it', async () => {
-      await registerUser('logout-cookie@example.com', 'pw');
-      const res = await authApp.request('/login', {
+    it('sign-out works from the cookie alone and clears it', async () => {
+      await registerUser('logout-cookie@example.com');
+      const cookie = cookieFromSetHeader(await signIn('logout-cookie@example.com', PW));
+
+      const signOut = await authApp.request('/api/auth/sign-out', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'logout-cookie@example.com', password: 'pw' }),
+        headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+        body: '{}',
       });
-      const cookie = cookieFromSetHeader(res);
+      expect(signOut.status).toBe(200);
+      const cleared = signOut.headers.getSetCookie().find((c) => c.startsWith('ratchet.session_token='))!;
+      expect(cleared).toMatch(/Max-Age=0/i);
 
-      const logout = await authApp.request('/logout', { method: 'POST', headers: { cookie } });
-      expect(logout.status).toBe(200);
-      const clearHeader = logout.headers.get('set-cookie')!;
-      expect(clearHeader).toMatch(/^ratchet_session=;|Max-Age=0/i);
-
-      const after = await authApp.request('/me', { headers: { cookie } });
+      const after = await authApp.request('/api/auth/me', { headers: { cookie } });
       expect(after.status).toBe(401);
     });
   });
 
   it('requirePermission wired into Role.operations: no token -> 401, wrong permission -> 403, granted permission -> 201', async () => {
-    const { token, user } = await registerUser('admin@example.com', 'pw');
+    const { token, user } = await registerUser('admin@example.com');
 
     const noAuth = await apiApp.request('/roles', {
       method: 'POST',
@@ -604,7 +668,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it('lists non-hidden models with admin label/displayField, excludes the hidden Session model', async () => {
-      const { token } = await registerUser('models@example.com', 'pw');
+      const { token } = await registerUser('models@example.com');
       const res = await consoleApp.request('/meta/models', { headers: { authorization: `Bearer ${token}` } });
       expect(res.status).toBe(200);
       const body = (await res.json()) as { data: { name: string; label: string; displayField: string }[] };
@@ -622,26 +686,29 @@ describeIfDb('auth system (against a live Postgres)', () => {
       expect(users.displayField).toBe('email'); // no console.displayField declared -> infers first string field
     });
 
-    it("strips pipeline fns/zod-schema and exposes passwordHash's writeAs", async () => {
-      const { token } = await registerUser('meta@example.com', 'pw');
+    it("strips pipeline fns/zod-schema, has no password column, and exposes setPassword's password param", async () => {
+      const { token } = await registerUser('meta@example.com');
       const res = await consoleApp.request('/meta/models/users', { headers: { authorization: `Bearer ${token}` } });
       const body = (await res.json()) as {
-        data: { fields: { key: string; sensitive: boolean; writeAs?: string }[]; operationNames: string[]; operations: unknown[] };
+        data: {
+          fields: { key: string }[];
+          operationNames: string[];
+          operations: { name: string; params: { key: string; sensitive: boolean; writeAs?: string }[] }[];
+        };
       };
 
-      const passwordHash = body.data.fields.find((f) => f.key === 'passwordHash')!;
-      expect(passwordHash.sensitive).toBe(true);
-      expect(passwordHash.writeAs).toBe('password');
-      // `operationNames` (create/update/remove — a plain string list) is fine to cross the wire;
-      // `operations` (custom operations beyond the three builtins, Q19) is empty since `User`
-      // doesn't declare any — either way, only serializable data ever appears here, never a raw
-      // pipeline function (`ConsoleModelMeta`'s type wouldn't allow one through in the first place).
-      expect(body.data.operationNames.sort()).toEqual(['create', 'remove', 'update']);
-      expect(body.data.operations).toEqual([]);
+      // passwords live in better-auth's `accounts` table, never on the user row
+      expect(body.data.fields.map((f) => f.key)).not.toContain('passwordHash');
+      // only serializable data crosses the wire, never a raw pipeline function
+      expect(body.data.operationNames.sort()).toEqual(['create', 'remove', 'setPassword', 'update']);
+      const setPassword = body.data.operations.find((o) => o.name === 'setPassword')!;
+      const param = setPassword.params.find((f) => f.key === 'password')!;
+      expect(param.sensitive).toBe(true);
+      expect(param.writeAs).toBe('password');
     });
 
     it('GET /meta/models/:name 404s for a hidden model, matching an unknown model', async () => {
-      const { token } = await registerUser('hidden@example.com', 'pw');
+      const { token } = await registerUser('hidden@example.com');
       const hidden = await consoleApp.request('/meta/models/sessions', { headers: { authorization: `Bearer ${token}` } });
       expect(hidden.status).toBe(404);
       const unknown = await consoleApp.request('/meta/models/nope', { headers: { authorization: `Bearer ${token}` } });
@@ -666,8 +733,8 @@ describeIfDb('auth system (against a live Postgres)', () => {
     }
 
     it('GET /:model scopes results to the requesting user, additively (cannot see other rows)', async () => {
-      const a = await registerUser('owner-a@example.com', 'pw');
-      const b = await registerUser('owner-b@example.com', 'pw');
+      const a = await registerUser('owner-a@example.com');
+      const b = await registerUser('owner-b@example.com');
       await grantRead(a.user.id as string, 'notes');
       await grantRead(b.user.id as string, 'notes');
       await insertRow(db, Note, { userId: a.user.id, text: 'a-note' });
@@ -683,8 +750,8 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it("GET /:model/:id 404s when the row isn't the requesting user's own", async () => {
-      const a = await registerUser('owner-c@example.com', 'pw');
-      const b = await registerUser('owner-d@example.com', 'pw');
+      const a = await registerUser('owner-c@example.com');
+      const b = await registerUser('owner-d@example.com');
       await grantRead(a.user.id as string, 'notes');
       const bNote = await insertRow(db, Note, { userId: b.user.id, text: 'private' });
 
@@ -698,8 +765,8 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it("a role granted `scope: 'any'` sees every row, not just its own", async () => {
-      const a = await registerUser('owner-e@example.com', 'pw');
-      const b = await registerUser('owner-f@example.com', 'pw');
+      const a = await registerUser('owner-e@example.com');
+      const b = await registerUser('owner-f@example.com');
       await grantRead(a.user.id as string, 'notes', 'any');
       await grantRead(b.user.id as string, 'notes');
       await insertRow(db, Note, { userId: a.user.id, text: 'a-note-2' });
@@ -711,8 +778,8 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it("a role granted `scope: 'any'` can read a row it doesn't own by id", async () => {
-      const a = await registerUser('owner-g@example.com', 'pw');
-      const b = await registerUser('owner-h@example.com', 'pw');
+      const a = await registerUser('owner-g@example.com');
+      const b = await registerUser('owner-h@example.com');
       await grantRead(a.user.id as string, 'notes', 'any');
       const bNote = await insertRow(db, Note, { userId: b.user.id, text: 'shared' });
 
@@ -747,7 +814,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     }
 
     it("the operation's own action grant alone is not enough — the base `update` field grant is still required", async () => {
-      const { token, user } = await registerUser('lock-only@example.com', 'pw');
+      const { token, user } = await registerUser('lock-only@example.com');
       await grantRole(user.id as string, [{ resource: 'lockable_docs', action: 'lock', scope: 'any' }]);
       const id = await createDoc('Doc');
 
@@ -757,7 +824,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it('the base `update` field grant alone is not enough — the operation still needs its own action grant', async () => {
-      const { token, user } = await registerUser('update-only@example.com', 'pw');
+      const { token, user } = await registerUser('update-only@example.com');
       await grantRole(user.id as string, [{ resource: 'lockable_docs', action: 'update', fields: ['locked'] }]);
       const id = await createDoc('Doc');
 
@@ -767,7 +834,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it('both grants together let the operation through and actually write the field', async () => {
-      const { token, user } = await registerUser('lock-and-update@example.com', 'pw');
+      const { token, user } = await registerUser('lock-and-update@example.com');
       await grantRole(user.id as string, [
         { resource: 'lockable_docs', action: 'lock', scope: 'any' },
         { resource: 'lockable_docs', action: 'update', fields: ['locked'] },
@@ -780,7 +847,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it("a permission target for a custom operation can't carry `fields` — it's fieldless, like `remove` (FIELD_SHAPED_ACTIONS)", async () => {
-      const { token, user } = await registerUser('fieldless@example.com', 'pw');
+      const { token, user } = await registerUser('fieldless@example.com');
       // grants this user `roles:update` (field-shaped — `'*'` per the comment at this suite's
       // admin-onboarding fixture above) plus the `permissions` field grant, so the PATCH below
       // reaches `requireValidPermissions` instead of 403ing on the outer resource:action check
@@ -815,7 +882,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
       });
       expect(noAuth.status).toBe(401);
 
-      const { token } = await registerUser('setperms-forbidden@example.com', 'pw');
+      const { token } = await registerUser('setperms-forbidden@example.com');
       const forbidden = await apiApp.request(`/roles/${roleId}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
@@ -825,7 +892,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it("the resource-level `roles:update` grant alone is not enough — the `permissions` field grant is still required", async () => {
-      const { token, user } = await registerUser('setperms-noupdate@example.com', 'pw');
+      const { token, user } = await registerUser('setperms-noupdate@example.com');
       // 'update' with no field grant at all — secure-by-default field permission (docs/content/docs/auth.mdx).
       await grantRole(user.id as string, [{ resource: 'roles', action: 'update', scope: 'any' }]);
       const roleId = generateId();
@@ -842,7 +909,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it('with the field grant, replaces the whole permission tree in one PATCH', async () => {
-      const { token, user } = await registerUser('setperms-admin@example.com', 'pw');
+      const { token, user } = await registerUser('setperms-admin@example.com');
       await grantRole(user.id as string, [{ resource: 'roles', action: 'update', fields: '*', scope: 'any' }]);
 
       const roleId = generateId();
@@ -872,7 +939,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it('rejects an invalid target (unknown resource) with a path-keyed field error, and writes nothing', async () => {
-      const { token, user } = await registerUser('setperms-invalid@example.com', 'pw');
+      const { token, user } = await registerUser('setperms-invalid@example.com');
       await grantRole(user.id as string, [{ resource: 'roles', action: 'update', fields: '*', scope: 'any' }]);
       const roleId = generateId();
       const now = new Date().toISOString();
@@ -892,7 +959,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it("accepts a `'*'`/`'*'` wildcard grant — the tree's top 'All resources' checkbox", async () => {
-      const { token, user } = await registerUser('setperms-wildcard@example.com', 'pw');
+      const { token, user } = await registerUser('setperms-wildcard@example.com');
       await grantRole(user.id as string, [{ resource: 'roles', action: 'update', fields: '*', scope: 'any' }]);
       const roleId = generateId();
       const now = new Date().toISOString();
@@ -908,7 +975,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it("rejects mixing the '*' resource with a specific resource", async () => {
-      const { token, user } = await registerUser('setperms-mixed-resource@example.com', 'pw');
+      const { token, user } = await registerUser('setperms-mixed-resource@example.com');
       await grantRole(user.id as string, [{ resource: 'roles', action: 'update', fields: '*', scope: 'any' }]);
       const roleId = generateId();
       const now = new Date().toISOString();
@@ -925,7 +992,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it("accepts `scope` on any resource, even one with no explicit api.ownerField — every model has a default owner (createdById)", async () => {
-      const { token, user } = await registerUser('setperms-plain-scope@example.com', 'pw');
+      const { token, user } = await registerUser('setperms-plain-scope@example.com');
       await grantRole(user.id as string, [{ resource: 'roles', action: 'update', fields: '*', scope: 'any' }]);
       const roleId = generateId();
       const now = new Date().toISOString();
@@ -943,7 +1010,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it("accepts `scope` on a resource with an explicit api.ownerField, and defaults to 'own' when omitted (GET /:model behavior)", async () => {
-      const { token, user } = await registerUser('setperms-good-scope@example.com', 'pw');
+      const { token, user } = await registerUser('setperms-good-scope@example.com');
       await grantRole(user.id as string, [{ resource: 'roles', action: 'update', fields: '*', scope: 'any' }]);
       const roleId = generateId();
       const now = new Date().toISOString();
@@ -961,7 +1028,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
     });
 
     it('a PATCH that omits `permissions` entirely leaves the existing tree untouched', async () => {
-      const { token, user } = await registerUser('setperms-untouched@example.com', 'pw');
+      const { token, user } = await registerUser('setperms-untouched@example.com');
       await grantRole(user.id as string, [{ resource: 'roles', action: 'update', fields: '*', scope: 'any' }]);
       const roleId = generateId();
       const now = new Date().toISOString();

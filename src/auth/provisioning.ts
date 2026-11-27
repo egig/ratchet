@@ -5,7 +5,7 @@ import { Workspace, DEFAULT_WORKSPACE_NAME } from '../workspace/index.js';
 import { Agent } from '../automation/models/index.js';
 import { User, Role } from './models/index.js';
 import { findRoleByName, hasRootAdmin, listPermissionsForRole } from './lookup.js';
-import { hashPassword } from './password.js';
+import { writeCredentialPassword } from './pipeline.js';
 
 const ROOT_ROLE_NAME = 'Root';
 const RATCHET_AGENT_NAME = 'Ratchet';
@@ -54,7 +54,10 @@ export async function provisionRootAdmin(db: AnyDb, params: { email: string; pas
       await updateRow(tx, Role, role.id as string, { permissions: { '*': { '*': { fields: '*', scope: 'any' } } } });
     }
 
-    const user = await insertRow(tx, User, { email: params.email, passwordHash: await hashPassword(params.password), roleId: role.id });
+    // Lowercased the way better-auth normalizes every email it stores and looks up — otherwise a
+    // mixed-case address provisioned here could never sign in through `/sign-in/email`.
+    const user = await insertRow(tx, User, { email: params.email.trim().toLowerCase(), name: '', roleId: role.id });
+    await writeCredentialPassword(tx, user.id as string, params.password);
     // the freshly-created `Root` role above has no workspaceTemplateId yet, so this is always the
     // blank default — see `workspace/provisioning.ts`'s `createDefaultWorkspace`, which this
     // mirrors for the one user-creation path that doesn't run through a pipe().

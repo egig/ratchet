@@ -3,6 +3,7 @@ import { createDb } from '../../core/db-client.js';
 import { loadConfig } from '../load-config.js';
 import { hasRootAdmin } from '../../auth/lookup.js';
 import { provisionRootAdmin } from '../../auth/provisioning.js';
+import { PipelineError } from '../../core/pipeline.js';
 
 /**
  * Production's bootstrap path for the first root admin — `/api/auth/setup` 404s
@@ -32,7 +33,15 @@ export async function runCreateAdmin(cwd: string, opts: { email?: string; passwo
     }
   }
 
-  await provisionRootAdmin(db, { email, password });
+  try {
+    await provisionRootAdmin(db, { email, password });
+  } catch (err) {
+    if (err instanceof PipelineError && err.fields) {
+      for (const [field, message] of Object.entries(err.fields)) console.error(`${field}: ${message}`);
+      process.exit(1);
+    }
+    throw err;
+  }
   console.log(`Root admin ${email} created.`);
   // The postgres driver keeps a connection pool alive, which would otherwise hold the process
   // open indefinitely after a one-shot CLI command finishes.

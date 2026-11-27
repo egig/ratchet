@@ -75,7 +75,7 @@ bun run serve        # boot the API + console
 
 `ratchet serve` reads `ratchet.config.ts` and the generated registry and boots a listening server — there's no server entry file to hand-write. It mounts, in order:
 
-- `/api/auth/*` — register/login/logout/me
+- `/api/auth/*` — sign-up, sign-in, sign-out, sessions, social sign-in ([better-auth](/docs/auth)), plus Ratchet's `/setup` and `/me`
 - `/api/:model` — the generic REST router, one route family for every model
 - `/console` — the generated console SPA (customize with `consolePath`; registered last since it can be mounted at `/`, see [Console](/docs/console))
 

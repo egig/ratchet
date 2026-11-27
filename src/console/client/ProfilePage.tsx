@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
-import { ApiRequestError } from './api.js';
+import { ApiRequestError, type ProfileInput } from './api.js';
 import { useAuth } from './auth.js';
 import { BrandMark } from './BrandMark.js';
 import { CheckIcon, ChevronLeftIcon } from './icons.js';
 
 /** Self-service profile edit — the one form a non-admin user can reach to change their own
- * `email`/`password` (`PATCH /api/auth/me`, `auth/router.ts`). Deliberately standalone (its own
+ * email/password (better-auth's `/api/auth/change-email` and `/change-password`; the latter
+ * requires the current password and signs out every other session). Deliberately standalone (its own
  * thin header, no `Layout` sidebar): it's linked from both the console sidebar's `AccountMenu`
  * and the workspace header's `UserMenu`, and a workspace user has no business landing in the
  * model sidebar just to change their password. */
@@ -14,6 +15,7 @@ export function ProfilePage() {
   const { user, updateProfile } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState(user?.email ?? '');
+  const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -35,15 +37,19 @@ export function ProfilePage() {
     setFieldErrors({});
     setSaved(false);
     try {
-      const input: { email?: string; password?: string } = {};
+      const input: ProfileInput = {};
       if (email !== user!.email) input.email = email;
-      if (password) input.password = password;
-      if (!input.email && !input.password) {
+      if (password) {
+        input.newPassword = password;
+        input.currentPassword = currentPassword;
+      }
+      if (!input.email && !input.newPassword) {
         setSaved(true);
         return;
       }
       await updateProfile(input);
       setPassword('');
+      setCurrentPassword('');
       setSaved(true);
     } catch (err) {
       if (err instanceof ApiRequestError) {
@@ -97,6 +103,22 @@ export function ProfilePage() {
           </label>
 
           <label className="block text-sm">
+            <span className="mb-1 block text-gray-700">Current password</span>
+            <input
+              type="password"
+              value={currentPassword}
+              required={password.length > 0}
+              placeholder="Required to set a new password"
+              autoComplete="current-password"
+              onChange={(e) => {
+                setCurrentPassword(e.target.value);
+                clearStatus();
+              }}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
+            />
+          </label>
+
+          <label className="block text-sm">
             <span className="mb-1 block text-gray-700">New password</span>
             <input
               type="password"
@@ -109,9 +131,7 @@ export function ProfilePage() {
               }}
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
             />
-            {(fieldErrors.password ?? fieldErrors.passwordHash) && (
-              <span className="mt-1 block text-xs text-red-600">{fieldErrors.password ?? fieldErrors.passwordHash}</span>
-            )}
+            {fieldErrors.password && <span className="mt-1 block text-xs text-red-600">{fieldErrors.password}</span>}
           </label>
 
           <button

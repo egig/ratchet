@@ -9,6 +9,7 @@ import {
   setupStatus as apiSetupStatus,
   updateProfile as apiUpdateProfile,
   type AuthUser,
+  type ProfileInput,
   type SetupInput,
 } from './api.js';
 import { queryKeys } from './query-keys.js';
@@ -21,12 +22,12 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   completeSetup: (input: SetupInput) => Promise<void>;
-  updateProfile: (input: { email?: string; password?: string }) => Promise<void>;
+  updateProfile: (input: ProfileInput) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
-/** Hydrates from the `ratchet_session` cookie (set by `/api/auth/login`) via `GET /api/auth/me`
+/** Hydrates from better-auth's `ratchet.session_token` cookie (set by `/api/auth/sign-in/email`) via `GET /api/auth/me`
  * on mount, so a page reload stays logged in without any client-side token storage. Also checks
  * `GET /api/auth/setup` alongside it, so the app knows on first paint whether to route to the
  * root-admin onboarding screen instead of the normal login page. Both run as React Query queries
@@ -45,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const loginMutation = useMutation({
-    // `/api/auth/login`'s response doesn't include resolved `permissions` (only `/me` does) —
+    // better-auth's sign-in response doesn't include resolved `permissions` (only `/me` does) —
     // re-hydrate through the same path the initial page-load query uses, so a fresh login and a
     // reload always agree on what the user can see.
     mutationFn: async ({ email, password }: { email: string; password: string }) => {
@@ -78,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const updateProfileMutation = useMutation({
-    mutationFn: (input: { email?: string; password?: string }) => apiUpdateProfile(input),
+    mutationFn: (input: ProfileInput) => apiUpdateProfile(input),
     onSuccess: (user) => queryClient.setQueryData(queryKeys.me, user),
   });
 
@@ -101,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const updateProfile = useCallback(
-    async (input: { email?: string; password?: string }) => {
+    async (input: ProfileInput) => {
       await updateProfileMutation.mutateAsync(input);
     },
     [updateProfileMutation],

@@ -149,7 +149,7 @@ export function createWorkflowRouter(runtime: WorkflowRuntime): App {
     return c.json(await db.transaction(async tx => {
       let serviceId = w.serviceId;
       if (body.roleId && !serviceId) {
-        const identity = await insertRow(tx, User, { email: `workflow-${w.id}@service.invalid`, passwordHash:'!disabled', active:false, roleId:body.roleId });
+        const identity = await insertRow(tx, User, { email: `workflow-${w.id}@service.invalid`, name: '', active: false, roleId: body.roleId });
         serviceId = identity.id;
       }
       return updateRow(tx, Workflow, String(w.id), {...body, ...(serviceId ? {serviceId} : {})});
@@ -166,7 +166,8 @@ export function createWorkflowRouter(runtime: WorkflowRuntime): App {
         if (!serviceId) {
           const identity = await insertRow(tx, User, {
             email: `workflow-${w.id}@service.invalid`,
-            passwordHash: '!disabled',
+            // no `credential` account and `active: false` — this identity can never sign in.
+            name: '',
             active: false,
             roleId: w.roleId,
           });

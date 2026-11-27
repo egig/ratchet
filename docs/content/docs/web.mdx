@@ -116,7 +116,7 @@ export async function loader({ params, context }) {
 
 - **`db`** — the Drizzle client.
 - **`session`** — the resolved session (`{ user, permissions, can(resource, action) }`) from the
-  same `ratchet_session` cookie the console and REST API use, or `null`.
+  same `ratchet.session_token` cookie (better-auth) the console and REST API use, or `null`.
 - **`settings.get(domain)`** — a per-request memoized Domain Settings reader.
 - **`registry`** — the name → model map.
 - **`storage`** — the `FileStorage` adapter.

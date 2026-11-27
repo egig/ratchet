@@ -9,9 +9,10 @@ export interface FieldCommonOptions<T = unknown> {
   sensitive?: boolean;
   /** hide this field from the console list/table view while keeping it editable in the form. */
   hideInTable?: boolean;
-  /** this field is written under a different, undeclared input key — e.g. `passwordHash`
-   * declares `writeAs: 'password'` because a pipeline fn (`hashPassword`) synthesizes the real
-   * column from a plaintext `password` key that never appears in `fields`. Read by console
+  /** this field is written under a different, undeclared input key — e.g. a `secretHash` column
+   * declaring `writeAs: 'secret'` because a pipeline fn derives the real column from a plaintext
+   * `secret` key that never appears in `fields`. On a `sensitive` field (or an operation param,
+   * like `User`'s `setPassword`) it also makes the console render a password input. Read by console
    * metadata (src/console/serialize-model.ts) so a generated form knows which key to submit under. */
   writeAs?: string;
   /** human-readable label for the console list/form views; defaults to a humanized field key

@@ -6,8 +6,6 @@ import { connectTestDb } from './helpers/db.js';
 import { defineModel, field } from '../src/core/index.js';
 import { generateId } from '../src/core/id.js';
 import { hashPassword } from '../src/auth/password.js';
-import { insertSession } from '../src/auth/lookup.js';
-import { generateToken, sessionExpiry } from '../src/auth/token.js';
 import { resolveAgentTools, executeAgentTool } from '../src/automation/tool.js';
 
 const connectionString = process.env.DATABASE_URL;
@@ -93,9 +91,11 @@ describeIfDb('agent tools are role-derived (src/automation/tool.ts)', () => {
       sql`INSERT INTO users (id, created_at, updated_at, email, password_hash, role_id)
           VALUES (${id}, ${now}, ${now}, ${`user-${id}@example.com`}, ${await hashPassword('pw')}, ${roleId})`,
     );
-    const token = generateToken();
-    const now2 = new Date();
-    await insertSession(db, generateId(), id, token, sessionExpiry(now2), now2);
+    const token = generateId();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await db.execute(
+      sql`INSERT INTO sessions (id, created_at, updated_at, user_id, token, expires_at) VALUES (${generateId()}, ${now}, ${now}, ${id}, ${token}, ${expiresAt})`,
+    );
     return { id, token };
   }
 

@@ -45,7 +45,7 @@ export interface OperationContext {
    * (src/router/create-router.ts). Read by `requireValidPermissions`/`validateRolePermissions`
    * (ratchet/auth) to check a permission target's `resource`/`action` against what actually
    * exists. Optional because call sites outside the generic `/api/:model` router (e.g.
-   * `/api/auth/register`) don't need it. */
+   * `/api/auth/setup`) don't need it. */
   registry?: Record<string, ModelDefinition>;
 }
 

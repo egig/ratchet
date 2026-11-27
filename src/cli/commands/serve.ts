@@ -39,6 +39,7 @@ export async function runServe(cwd: string): Promise<ReturnType<typeof Bun.serve
       : undefined,
     env: resolveEnv(config),
     workflows: config.workflows,
+    auth: config.auth,
   });
 
   const port = Number(process.env.PORT ?? 3000);

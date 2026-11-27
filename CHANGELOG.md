@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** authentication is now [better-auth](https://www.better-auth.com) (see [Auth](https://egig.github.io/ratchet/docs/auth) and ADR 0005). Roles, permissions, field grants, and ownership scope are unchanged.
+  - **Breaking:** `/api/auth/register`, `/login`, `/logout`, and `PATCH /api/auth/me` are removed. Use better-auth's `/api/auth/sign-up/email`, `/sign-in/email`, `/sign-out`, `/change-email`, and `/change-password`. Their responses are bare objects and errors are `{ code, message }`. `GET /api/auth/me` and `/api/auth/setup` keep their shapes.
+  - **Breaking:** passwords moved from `users.password_hash` to the new `accounts` table (`providerId: 'credential'`). Existing hashes still verify, but the generated migration needs a data step added by hand before it drops the column — see "Upgrading from the built-in auth" in the Auth docs.
+  - **Breaking:** the session cookie is now `ratchet.session_token` (signed), so browser sessions end once on upgrade. Sessions last 7 days and slide forward with use (was a fixed 30 days).
+  - **Breaking:** passwords must be 8–128 characters.
+  - **Breaking:** `hashPasswordPipeline` and `registerPipeline` are removed from `@egig/ratchet/auth`. An admin sets a password with the new `User` operation `setPassword` (console: **Set password**), gated by `users:setPassword`.
+  - Changing your own password in the console now asks for the current one and signs out your other sessions.
+  - Production needs `BETTER_AUTH_SECRET`; set `BETTER_AUTH_URL` to the public origin.
+
 - Ratchet is now positioned as the backend starter kit your coding agent already understands: one command to a running app, then built by describing changes to an agent (Claude Code, Cursor, Codex) or by hand. The README, docs home, Getting Started, and the new [Building with a coding agent](https://egig.github.io/ratchet/docs/coding-agents) page reflect this.
 - `ratchet init` now scaffolds a coding-agent guide: `AGENTS.md` (commands, layout, rules, recipes), a `CLAUDE.md` that imports it, and three agent skills under `.claude/skills/` (`add-model`, `add-page`, `add-logic`). It also writes `seed.ts` sample data, adds `check`, `seed`, and `create-admin` scripts to `package.json`, and its closing message is now just `bun install && bun run dev`.
 - `ratchet dev` also watches `seed.ts` and runs it after every schema sync. When a sync fails, it prints the error with a fix hint, keeps the last good server running, and retries on the next save, including when the very first sync fails.
@@ -16,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** on SQLite, `field.enum()` no longer emits a database `CHECK` constraint. Enum values are still enforced by the API validators. Existing SQLite databases drop the constraints on their next `push` or migration. Postgres is unchanged.
 
 ### Added
+
+- `auth` in `ratchet.config.ts` (and `createRatchetApp({ auth })`): better-auth's options, passed through — social sign-in (`socialProviders`), email verification and password reset callbacks, session lifetimes, rate limiting, plugins. `ratchet build` bundles the config into `dist/server.js` when it's set.
+- Built-in `Account` and `Verification` models (`accounts`, `verifications` tables), and `name`, `emailVerified`, `image` on `User`. `Session` gains `ipAddress` and `userAgent`.
+- `createRatchetAuth`, `ratchetAdapter`, `resolveSessionUser`, `resolveSessionToken`, and `writeCredentialPassword` are exported from `@egig/ratchet/auth`.
 
 - `ratchet seed`: runs the project's `seed.ts`. `defineSeed` and `createSeedContext` are exported from `@egig/ratchet/core`. `insert(model, values)` validates against the model's create schema; `isEmpty(model)` guards against duplicates.
 - `ratchet check`: validates models (regenerating `.ratchet/` without writing migrations), type-checks the project, and runs `bun test` when tests exist. Prints one PASS/FAIL/SKIP line per step and exits non-zero on failure.

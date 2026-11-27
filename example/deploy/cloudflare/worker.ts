@@ -59,6 +59,10 @@ interface Env {
   HYPERDRIVE: { connectionString: string };
   ASSETS: AssetsBinding;
   FILES: R2Bucket;
+  /** `wrangler secret put BETTER_AUTH_SECRET` — signs session cookies (better-auth, /api/auth). */
+  BETTER_AUTH_SECRET: string;
+  /** the Worker's public origin, e.g. `https://app.example.com` — better-auth's `baseURL`. */
+  BETTER_AUTH_URL: string;
 }
 
 function notSupported(method: string): Error {
@@ -179,6 +183,9 @@ export default {
       storage: new FileStorage(new R2StorageAdapter(env.FILES)),
       consoleAssets: createAssetsBindingSource(env.ASSETS),
       consolePath: CONSOLE_PATH,
+      // Worker env vars arrive as bindings, not `process.env`, so better-auth's secret and origin
+      // are passed explicitly. Add `socialProviders`/`plugins` here the same way.
+      auth: { secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL },
     });
 
     return app.fetch(request);

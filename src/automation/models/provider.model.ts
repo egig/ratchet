@@ -5,7 +5,7 @@ import { defineModel, field } from '../../core/index.js';
  * picks a `Provider` instead of typing an API key (or an env var name) directly. `apiKey` is
  * `sensitive: true` (see `core/serialize.ts`) — stored in plain, read server-side by
  * `runAgentTurn` (src/automation/run-turn.ts), but stripped from every HTTP response the same
- * way `User.passwordHash` is.
+ * way `Account.password` is.
  */
 export const Provider = defineModel('providers', {
   fields: {

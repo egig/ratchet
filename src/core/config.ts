@@ -82,6 +82,11 @@ export function resolveDbConfig(db: DbConfig): { driver: 'postgres'; connectionS
 
 export interface FrameworkConfig {
   workflows?: import('../workflows/config.js').WorkflowConfig;
+  /** better-auth options, passed through to the `/api/auth` router — social providers
+   * (`socialProviders`), email verification/password-reset callbacks, session lifetimes, extra
+   * `plugins`, `secret`/`baseURL`. Omit for email/password sign-in with better-auth's defaults.
+   * See `AuthConfig` (src/auth/better-auth.ts) for what Ratchet fixes and why. */
+  auth?: import('../auth/better-auth.js').AuthConfig;
   db: DbConfig;
   /** `file` field blob backend — see `StorageConfig`. default: local fs under
    * `<generatedDir>/storage` (today's zero-config behavior), same as omitting this entirely. */

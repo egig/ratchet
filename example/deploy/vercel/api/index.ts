@@ -50,5 +50,6 @@ const storage = await buildStorageAdapter(
 );
 
 // `App`'s own `.fetch` (router/http-app.ts) matches Vercel's "fetch Web Standard" function export
-// convention directly — no adapter needed.
+// convention directly — no adapter needed. better-auth (/api/auth) reads `BETTER_AUTH_SECRET` and
+// `BETTER_AUTH_URL` from the environment itself; pass `auth: { socialProviders, ... }` for more.
 export default await createRatchetApp({ db, bundle, storage });
