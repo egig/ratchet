@@ -83,7 +83,8 @@ async function mergeGitignore(cwd: string, stubContent: string): Promise<void> {
  * ratchet.config.ts, an example model, drizzle/migrations/, and a working public site: a
  * hand-authored landing page, a `models/website/` content set (a `Page` model + a `Contact` model +
  * the `website` Domain Settings, all editable source), and the routes that render them plus the
- * contact form. No server entry file to write: `ratchet serve` (framework-owned, see
+ * contact form, `seed.ts` sample data, and the coding-agent guide (`AGENTS.md`, a `CLAUDE.md` that
+ * imports it, and `.claude/skills/`). No server entry file to write: `ratchet serve` (framework-owned, see
  * src/cli/commands/serve.ts) boots the API directly from ratchet.config.ts + the generated
  * registry. Never overwrites a file that's already there — safe to re-run in a partially set-up
  * directory. */
@@ -111,11 +112,14 @@ export async function runInit(cwd: string): Promise<void> {
   }
 
   console.log('');
-  console.log('next steps:');
-  console.log('  1. bun install');
-  console.log('  2. bun run generate   (writes .ratchet/* + SQL migration files — no DATABASE_URL needed, uses ./local.db by default)');
-  console.log('  3. bun run migrate && bun run serve   (or `bun run dev` for local push-based iteration)');
-  console.log('  4. open the console, complete setup, then add your pages under Pages');
+  console.log('your app is ready. start it:');
   console.log('');
-  console.log('using Postgres or Turso instead of the local SQLite file? set DATABASE_URL (and driver: \'postgres\' in ratchet.config.ts for Postgres) before step 2.');
+  console.log('  bun install');
+  console.log('  bun run dev');
+  console.log('');
+  console.log('then open http://localhost:3000 (site) and http://localhost:3000/console (admin — first visit creates your login).');
+  console.log('sample products and pages are loaded from seed.ts; the database is a local file (local.db), nothing to install.');
+  console.log('');
+  console.log('building with a coding agent (Claude Code, Cursor, Codex, ...)? open this folder in it and describe what you want —');
+  console.log('AGENTS.md tells it how this project works, and `bun run check` tells it whether its change is correct.');
 }

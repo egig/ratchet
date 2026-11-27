@@ -57,7 +57,7 @@ function columnExpr(key: string, f: FieldDefinition, dialect: Dialect): string {
       break;
     case 'enum':
       // §4: varchar/text + CHECK, not a native enum type — see the check() constraint emitted
-      // below (extraConfigLines). sqlite-core's check() API is the same shape as pg-core's.
+      // below (extraConfigLines; Postgres only, see the comment there for why SQLite skips it).
       expr = dialect === 'postgres' ? `varchar('${col}')` : `text('${col}')`;
       break;
     case 'json':
@@ -111,7 +111,7 @@ function columnExpr(key: string, f: FieldDefinition, dialect: Dialect): string {
   return expr;
 }
 
-function extraConfigLines(model: ModelDefinition): string[] {
+function extraConfigLines(model: ModelDefinition, dialect: Dialect): string[] {
   const lines: string[] = [];
   for (const [key, f] of Object.entries(model.fields)) {
     const col = toSnakeCase(key);
@@ -131,7 +131,14 @@ function extraConfigLines(model: ModelDefinition): string[] {
           `),`,
       );
     }
-    if (f.kind === 'enum') {
+    // Postgres only. On SQLite, drizzle-kit (0.28 through 0.31) misreads CHECK constraints back
+    // from a multi-table database, so `push` sees every table as changed and rebuilds them all
+    // (CREATE __new_x / INSERT SELECT / DROP / RENAME) on *every* sync. When that rebuild
+    // coincides with a real column add, its INSERT ... SELECT names the new column on the old
+    // table and fails ("no such column"). Without the CHECKs push emits plain ALTER TABLE ADD.
+    // Enum values stay enforced by the Zod validators on every API write; only raw SQL writes
+    // from routes/ bypass that on SQLite.
+    if (f.kind === 'enum' && dialect === 'postgres') {
       const values = f.values.map((v) => `'${v.replace(/'/g, "''")}'`).join(', ');
       lines.push(
         `  check('${model.name}_${col}_check', sql` +
@@ -184,7 +191,7 @@ function emitTable(model: ModelDefinition, dialect: Dialect, extraLines: string[
     `  index('${model.name}_created_at_idx').on(table.createdAt),`,
     `  index('${model.name}_updated_at_idx').on(table.updatedAt),`,
     `  index('${model.name}_created_by_id_idx').on(table.createdById),`,
-    ...extraConfigLines(model),
+    ...extraConfigLines(model, dialect),
     ...extraLines,
   ];
 
@@ -265,7 +272,6 @@ export function generateSchemaSource(scanned: ScannedModel[], dialect: Dialect):
           `  numeric,`,
           `  index,`,
           `  uniqueIndex,`,
-          `  check,`,
           `} from 'drizzle-orm/sqlite-core';`,
           `import { sql } from 'drizzle-orm';`,
           ``,

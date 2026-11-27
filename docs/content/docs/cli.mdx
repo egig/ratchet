@@ -9,7 +9,7 @@ ratchet <command>
 
 ## `ratchet init`
 
-Scaffolds a new project in the current directory: `package.json`, `tsconfig.json`, `ratchet.config.ts`, `models/example.model.ts`, `migrations/`, and a `.gitignore`. Never overwrites a file that already exists — safe to re-run.
+Scaffolds a ready-to-run project in the current directory. It writes `package.json`, `tsconfig.json`, `ratchet.config.ts`, the starter models and `routes/`, `seed.ts` sample data, `migrations/`, and a `.gitignore`. It also writes the coding-agent guide: `AGENTS.md`, a `CLAUDE.md` that imports it, and `.claude/skills/` (see [Building with a coding agent](/docs/coding-agents)). It never overwrites a file that already exists, so it's safe to re-run.
 
 ## `ratchet generate`
 
@@ -31,7 +31,38 @@ Runs `drizzle-kit migrate` against `migrationsDir` (`migrations/` by default), a
 
 ## `ratchet dev`
 
-Watches `models/**/*.model.ts`. On every change: regenerates, runs `drizzle-kit push` (pushes schema changes directly, no migration files), and restarts the dev server. Faster iteration loop than `migrate`, intended for local development only.
+Watches `models/`, `routes/`, and `seed.ts`. On every change it regenerates, runs `drizzle-kit push` (schema changes go straight to the database, with no migration files), runs `seed.ts`, and restarts the dev server. Each sync runs in a fresh process, so it always reads the files as they are now. If a sync fails, `dev` prints the error with a `fix:` hint, keeps the last good server running, and retries on the next save. Intended for local development only.
+
+<Callout type="warn">
+`push` applies destructive changes without asking. Removing or renaming a field drops that column's data. Adding a `required` field with no `default` to a table that already has rows **empties the table**. Use `generate` + `migrate` for any database whose data you need to keep.
+</Callout>
+
+## `ratchet seed`
+
+Runs the project's `seed.ts` against the database. `dev` already runs it after every sync. The default export receives `insert` and `isEmpty`:
+
+```ts
+import { defineSeed } from '@egig/ratchet/core';
+import { Post } from './models/blog/post.model.js';
+
+export default defineSeed(async ({ insert, isEmpty }) => {
+  if (await isEmpty(Post)) {
+    await insert(Post, { title: 'Hello', status: 'published' });
+  }
+});
+```
+
+`insert(model, values)` validates against the model's create schema (the same rules as `POST /api/:model`) and fails with the field named. It doesn't run the model's `create` pipeline. `isEmpty(model)` guards each block, so re-running never duplicates rows. A missing `seed.ts` is a no-op.
+
+## `ratchet check`
+
+The "is my change OK?" command, for people and coding agents alike. It runs three steps and prints a PASS/FAIL/SKIP line for each:
+
+1. **models**: loads every model and Domain and regenerates `.ratchet/`. No migration files are written.
+2. **types**: runs `tsc --noEmit` on the project.
+3. **tests**: runs `bun test`, if the project has any `*.test.ts` files.
+
+It exits non-zero if any step fails, so it works in CI too.
 
 ## `ratchet serve`
 

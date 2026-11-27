@@ -82,6 +82,15 @@ describe('generate() against a self-contained model fixture', () => {
     expect(schemaSrc).not.toContain('gen_random_uuid');
   });
 
+  it('omits enum CHECK constraints on sqlite (drizzle-kit push would rebuild every table on each sync)', async () => {
+    await generate({ modelsDir, generatedDir, dialect: 'sqlite' });
+    const schemaSrc = await import('node:fs/promises').then((fs) =>
+      fs.readFile(path.join(generatedDir, 'schema.ts'), 'utf8'),
+    );
+    expect(schemaSrc).toContain("sqliteTable('invoices'");
+    expect(schemaSrc).not.toContain('check(');
+  });
+
   it('emits validators that import the framework via the bare `@egig/ratchet/core` specifier, not a filesystem path', async () => {
     await generate({ modelsDir, generatedDir });
     const validatorsSrc = await import('node:fs/promises').then((fs) =>

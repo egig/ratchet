@@ -5,30 +5,31 @@ import { baseOptions } from '@/lib/layout.shared';
 
 const features = [
   {
-    title: 'Model once, ship the backend',
+    title: 'Running in one command',
     details:
-      'Define a model and Ratchet generates Postgres schema, validation, REST API, and admin console. Features in hours, not weeks.',
+      'Database, API, admin console, login, and a sample storefront with seed data. No database to install, nothing to configure.',
   },
   {
-    title: 'Console your team can use',
-    details: 'Searchable, sortable tables with inline editing — no admin screens to build.',
+    title: 'Your agent already knows the rules',
+    details:
+      'Every project ships an AGENTS.md and agent skills that tell Claude Code, Cursor, or Codex how to add models, pages, and logic correctly.',
+  },
+  {
+    title: 'One command says "done"',
+    details:
+      '`bun run check` validates models, type-checks, and runs tests, with errors that name the file and say how to fix it.',
+  },
+  {
+    title: 'Describe it, and it gets built',
+    details: 'One model file becomes a table, a validated REST API, and admin screens. Save it and the running app updates.',
   },
   {
     title: 'Secure by default',
     details: 'Auth, roles, and permissions apply to every route automatically, down to individual fields.',
   },
   {
-    title: 'Fits real workflows',
-    details:
-      'Custom actions like lock or approve, plus custom forms and inputs — no framework forks or hand-wired routes.',
-  },
-  {
-    title: 'Real data shapes, handled',
-    details: 'Hierarchies, multi-column sorting, and case-insensitive search work out of the box.',
-  },
-  {
-    title: 'Ship anywhere',
-    details: 'Develop on Bun, deploy to any Node host or container. No lock-in.',
+    title: 'Grows with you',
+    details: 'SQLite on day one, Postgres when you need it. Deploy to any Node host or container. No lock-in.',
   },
 ];
 
@@ -38,7 +39,7 @@ export function meta({}: Route.MetaArgs) {
     {
       name: 'description',
       content:
-        'RATher an arCHEType, you build something out of. TypeScript models -> Postgres schema, codegen, and composable pipelines.',
+        'The backend starter kit your coding agent already understands. Start a full app in one command, then build it by describing what you want.',
     },
   ];
 }
@@ -62,8 +63,10 @@ export default function HomePage() {
           className="hidden dark:block"
         />
         <h1 className="text-4xl font-bold">Ratchet</h1>
-        <p className="text-xl text-fd-muted-foreground">Models in, App out.</p>
-        <p className="max-w-xl text-fd-muted-foreground">RATher an arCHEType, you build something out of.</p>
+        <p className="text-xl text-fd-muted-foreground">The backend starter kit your coding agent already understands.</p>
+        <p className="max-w-xl text-fd-muted-foreground">
+          Start a full app (database, API, admin, login) in one command. Then build it by describing what you want.
+        </p>
         <div className="flex gap-4">
           <Link
             to="/docs/getting-started"

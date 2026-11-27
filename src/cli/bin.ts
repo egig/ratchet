@@ -8,13 +8,17 @@ import { runDev } from './commands/dev.js';
 import { runServe } from './commands/serve.js';
 import { runBuild } from './commands/build.js';
 import { runCreateAdmin } from './commands/create-admin.js';
+import { runDevSync } from './commands/dev.js';
+import { runSeed } from './commands/seed.js';
+import { runCheck } from './commands/check.js';
+import { formatCliError } from './errors.js';
 
 // Every command below resolves paths off `process.cwd()` — Bun automatically loads `.env` (and
 // `.env.local`, etc.) from that same directory (e.g. `DATABASE_URL`) at startup, before any
 // command runs. Silently a no-op for projects with no `.env`.
 
 const program = new Command();
-program.name('ratchet').description('Model -> Postgres schema, codegen, and composable pipelines.');
+program.name('ratchet').description('The backend starter kit your coding agent already understands.');
 
 program
   .command('init')
@@ -51,6 +55,37 @@ program
     await runDev(process.cwd());
   });
 
+// Internal: one generate + push + seed pass, spawned by `dev` per change so every pass reads the
+// current model files (see runDevSync). Hidden from --help.
+program
+  .command('dev-sync', { hidden: true })
+  .action(async () => {
+    // Explicit exit either way: a postgres pool opened by the seed step would otherwise hold this
+    // one-shot child open, and `dev` waits on its exit.
+    try {
+      await runDevSync(process.cwd());
+      process.exit(0);
+    } catch (err) {
+      console.error(formatCliError(err));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('seed')
+  .description('Run seed.ts against the database (dev also runs it after every schema sync)')
+  .action(async () => {
+    await runSeed(process.cwd());
+    process.exit(0);
+  });
+
+program
+  .command('check')
+  .description('Validate models, type-check the project, and run its tests — one PASS/FAIL report')
+  .action(async () => {
+    await runCheck(process.cwd());
+  });
+
 program
   .command('serve')
   .description('Boot the API server: ratchet.config.ts + the generated registry -> a listening /api/:model router')
@@ -75,6 +110,6 @@ program
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
+  console.error(formatCliError(err));
   process.exitCode = 1;
 });

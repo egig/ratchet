@@ -8,8 +8,24 @@ import { runDrizzleKit } from '../run-drizzle-kit.js';
 import { buildConsoleClient, type ConsoleClientHandle } from '../build-console.js';
 import { buildWebClient } from '../build-web.js';
 import { resolveDbConfig, type FrameworkConfig } from '../../core/config.js';
+import { runSeed, SEED_FILE } from './seed.js';
+import path from 'node:path';
 
 const DEBOUNCE_MS = 200;
+
+/**
+ * One schema sync: regenerate `.ratchet/`, `drizzle-kit push`, rebuild the web bundle, then run
+ * `seed.ts` (if any). `runDev` never calls this in-process — it spawns `ratchet dev-sync` per change
+ * instead, because Bun caches ES modules by URL: re-`import()`ing an edited `*.model.ts` inside the
+ * long-lived `dev` process returns the *old* module, so an in-process regenerate would silently
+ * emit a schema for the previous model shape. A fresh child process always reads the current files.
+ */
+export async function runDevSync(cwd: string): Promise<void> {
+  const config = await loadConfig(cwd);
+  const dirs = resolveDirs(cwd, config);
+  await generateAndPush(cwd, dirs, config);
+  await runSeed(cwd);
+}
 
 async function generateAndPush(cwd: string, dirs: ReturnType<typeof resolveDirs>, config: FrameworkConfig): Promise<void> {
   await generate({
@@ -46,6 +62,16 @@ export async function runDev(cwd: string): Promise<void> {
   // watch loop down with it.
   const cliEntry = process.argv[1]!;
 
+  /** Runs `ratchet dev-sync` in a fresh process (see `runDevSync` for why) — resolves `true` on
+   * success. Its stdout/stderr (including drizzle-kit's and the error hint) go straight through. */
+  function sync(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const proc = spawn('bun', [cliEntry, 'dev-sync'], { cwd, stdio: 'inherit' });
+      proc.on('error', () => resolve(false));
+      proc.on('exit', (code) => resolve(code === 0));
+    });
+  }
+
   function startServer(): void {
     child = spawn('bun', [cliEntry, 'serve'], { cwd, stdio: 'inherit' });
     child.on('exit', (code, signal) => {
@@ -79,11 +105,13 @@ export async function runDev(cwd: string): Promise<void> {
     }
     restarting = true;
     console.log(`[dev] ${reason} — regenerating and pushing schema...`);
-    try {
-      await generateAndPush(cwd, dirs, config);
-    } catch (err) {
-      console.error('[dev] generate/push failed, keeping the previous server running:', err instanceof Error ? err.message : err);
+    if (!(await sync())) {
+      console.error('[dev] sync failed (see the error above) — keeping the previous server running. Save a fix and it retries.');
       restarting = false;
+      if (pendingRestart) {
+        pendingRestart = false;
+        await restart('queued change');
+      }
       return;
     }
     await stopServer();
@@ -95,8 +123,14 @@ export async function runDev(cwd: string): Promise<void> {
     }
   }
 
-  await generateAndPush(cwd, dirs, config);
-  startServer();
+  if (!(await sync())) {
+    // Nothing to keep running yet on the very first sync — but don't exit either: stay in the
+    // watch loop so saving a fix brings the server up, which is what a beginner (or an agent)
+    // fixing the reported error expects.
+    console.error('[dev] initial sync failed (see the error above) — fix it and save; dev will retry.');
+  } else {
+    startServer();
+  }
   const consoleHandle: ConsoleClientHandle = await buildConsoleClient(dirs, { watch: true, mode: 'dev' });
   console.log(`[dev] watching ${dirs.modelsDir} for changes`);
 
@@ -116,6 +150,14 @@ export async function runDev(cwd: string): Promise<void> {
       debounceTimer = setTimeout(() => void restart(`${filename} changed`), DEBOUNCE_MS);
     });
     console.log(`[dev] watching ${dirs.routesDir} for changes`);
+  }
+
+  const seedPath = path.join(cwd, SEED_FILE);
+  if (existsSync(seedPath)) {
+    watch(seedPath, () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => void restart(`${SEED_FILE} changed`), DEBOUNCE_MS);
+    });
   }
 
   const shutdown = async () => {

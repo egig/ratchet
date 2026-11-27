@@ -49,6 +49,12 @@ for the full per-field-kind column mapping (e.g. `boolean` → `integer({mode:'b
 SQLite-portable rewrite. None of this affects application code — `field.*` declarations and the
 REST API's wire shape are identical across both drivers.
 
+One difference you might notice: `field.enum()` gets a database `CHECK` constraint on Postgres
+only. drizzle-kit misreads SQLite `CHECK` constraints, which made `ratchet dev` rebuild every
+table on every sync and fail when a column was added. On SQLite, enum values are still enforced by
+the validators on every API write. Raw SQL writes from your own `routes/` code aren't checked by
+the database, so validate those values yourself.
+
 ## Raw SQL in your own code
 
 `context.db` (in a `routes/*.tsx` loader/action, or any other code holding an `AnyDb` handle) is

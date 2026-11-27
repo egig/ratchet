@@ -71,8 +71,16 @@ them needs; the DDL itself stays per-suite.
    forms/field-inputs), **then run `drizzle-kit generate`** to emit reviewable SQL migration files.
 4. `ratchet migrate` — `drizzle-kit migrate` only; applies pending SQL. It no longer regenerates or
    diffs.
-5. `ratchet serve` — boot the server (see below). `ratchet dev` watches models and does
-   generate + `drizzle-kit push` (no migration files, local dev only) + restart.
+5. `ratchet serve` — boot the server (see below). `ratchet dev` watches models/routes/`seed.ts`
+   and, per change, spawns the hidden `ratchet dev-sync` child (generate + `drizzle-kit push` +
+   `seed.ts`) then restarts. The child process is load-bearing: Bun caches ES modules by URL, so an
+   in-process re-`import()` of an edited model returns the stale one.
+   `ratchet check` = models + `tsc` + tests, one PASS/FAIL report; `ratchet seed` runs `seed.ts`.
+
+The product is positioned as an agent-ready starter kit: the scaffold's `AGENTS.md`, `CLAUDE.md`,
+and `.claude/skills/` (in `src/cli/stubs/`) are user-facing docs for the consumer's coding agent.
+Keep them accurate when the field DSL, CLI, or conventions change. On SQLite, enum `CHECK`
+constraints are deliberately not emitted (drizzle-kit push bug; see `schema-gen.ts`).
 6. `ratchet build` — hashed console client bundle + a bundled plain-Node `dist/server.js`.
 
 `.ratchet/` (the `generatedDir`) is generated output — regenerate it, don't hand-edit.

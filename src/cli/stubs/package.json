@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "ratchet dev",
+    "check": "ratchet check",
+    "seed": "ratchet seed",
+    "create-admin": "ratchet create-admin",
     "serve": "ratchet serve",
     "generate": "ratchet generate",
     "migrate": "ratchet migrate",

@@ -58,6 +58,9 @@ export { buildCreateSchema, buildUpdateSchema, buildDomainSettingsSchema, buildP
 
 export { getDomainSettings, updateDomainSettings } from './domain-settings-persistence.js';
 
+export { defineSeed, createSeedContext } from './seed.js';
+export type { SeedContext, SeedFn } from './seed.js';
+
 export { generateId } from './id.js';
 
 export { normalizeTimestamps, redactSensitiveFields, deriveFileFields, deriveDomainSettingsFileFields, siteAssetUrl } from './serialize.js';

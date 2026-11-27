@@ -1,7 +1,7 @@
 {
   "name": "@egig/ratchet",
   "version": "0.1.0",
-  "description": "Model driven application framework: TypeScript models -> SQLite/Postgres schema, codegen, and composable pipelines.",
+  "description": "The backend starter kit your coding agent already understands: one command to a running app with database, REST API, admin console, and auth.",
   "license": "MIT",
   "type": "module",
   "workspaces": [

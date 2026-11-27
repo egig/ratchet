@@ -78,7 +78,15 @@ export async function scanModels(modelsDir: string): Promise<ScannedModel[]> {
 
   for (const filePath of files) {
     const moduleUrl = pathToFileURL(filePath).href;
-    const mod = (await import(moduleUrl)) as Record<string, unknown>;
+    let mod: Record<string, unknown>;
+    try {
+      mod = (await import(moduleUrl)) as Record<string, unknown>;
+    } catch (err) {
+      // Name the file: a bare "field declares both 'required: true' and a 'default'" thrown while
+      // a model module evaluates gives no clue which of N model files it came from.
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`in ${path.relative(process.cwd(), filePath)}: ${message}`, { cause: err });
+    }
     for (const [exportName, value] of Object.entries(mod)) {
       if (isModelDefinition(value)) {
         scanned.push({ filePath, exportName, model: value, domain: folderDomainOf(modelsDir, path.dirname(filePath)) });

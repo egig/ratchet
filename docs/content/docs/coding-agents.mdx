@@ -1,0 +1,77 @@
+---
+title: Building with a coding agent
+description: How a Ratchet project is set up so Claude Code, Cursor, or Codex can build on it safely.
+---
+
+Ratchet is built to be the starting point you hand to a coding agent. You don't need to know
+TypeScript to get going: start the app, open the folder in your agent, and describe what you want.
+
+## Start
+
+```sh
+mkdir my-app && cd my-app
+bunx @egig/ratchet init
+bun install
+bun run dev
+```
+
+The site runs at `http://localhost:3000` and the admin console at `/console`. Your first console
+visit creates your login, and sample data is already loaded from `seed.ts`.
+
+## Ask for what you want
+
+Open the folder in Claude Code, Cursor, Codex, or any agent that reads `AGENTS.md`, and describe
+the change in plain words:
+
+- "Add a blog with posts, tags, and a page that lists published posts."
+- "Customers should have a loyalty tier: bronze, silver, or gold."
+- "Don't allow an order to be cancelled once it has shipped."
+
+## What the agent gets
+
+Every project from `ratchet init` includes:
+
+| File | Purpose |
+| --- | --- |
+| `AGENTS.md` | How the project works: commands, folder layout, rules (never edit `.ratchet/`, money is a string, the API is locked by default, which changes lose data), and copy-paste recipes for models, logic, actions, and pages. |
+| `CLAUDE.md` | One line, `@AGENTS.md`, so Claude Code loads the same guide. |
+| `.claude/skills/add-model` | Step by step: add or change a model, relate models, seed it, verify. |
+| `.claude/skills/add-page` | Step by step: add a public page, query data, handle a form. |
+| `.claude/skills/add-logic` | Step by step: validation rules, side effects, and action buttons. |
+| `seed.ts` | Sample data the agent extends when it adds a model. |
+
+These are ordinary files in your project. Edit them to describe your own conventions as the app
+grows.
+
+## How the agent knows it's done
+
+```sh
+bun run check
+```
+
+`check` validates every model, type-checks the project, and runs its tests, then prints one
+PASS/FAIL line per step. When something is wrong, the error names the file, and a `fix:` line
+says what to change:
+
+```text
+error: model 'posts': field 'authorId' references unknown model 'Author'. Known models: ...
+fix:   The first argument to field.reference()/manyToMany() is the target's table name (the string passed to defineModel, e.g. 'products'), not its export name.
+```
+
+`bun run dev` prints the same kind of error when a save breaks something. It keeps the last good
+version running and retries on the next save.
+
+## Keep an eye on
+
+<Callout type="warn">
+In development, schema changes apply to your local database without asking. Removing or renaming
+a field drops that column's data, and adding a required field with no default to a table that
+already has rows empties that table. `AGENTS.md` tells the agent to ask you first. If your local
+data matters, review model changes before saving them.
+</Callout>
+
+- **Permissions.** The JSON API requires a logged-in user with a matching permission, even for
+  reads. Public pages in `routes/` read the database directly and don't need this. If the agent
+  wants to add `api: { public: true }`, ask why.
+- **Production.** `dev` is for your machine. For a real deployment, use `bun run generate` and
+  `bun run migrate` so every schema change is a reviewable SQL file. See [Deploy](/docs/deploy).

@@ -16,6 +16,6 @@
     "sourceMap": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src", "models", "routes", "logic", "ratchet.config.ts"],
+  "include": ["src", "models", "routes", "logic", "ratchet.config.ts", "seed.ts"],
   "exclude": ["dist", "node_modules", ".ratchet"]
 }

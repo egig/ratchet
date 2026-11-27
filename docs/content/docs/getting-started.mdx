@@ -3,7 +3,16 @@ title: Getting Started
 description: Scaffold a project, define your first model, and boot the server.
 ---
 
-Ratchet turns a directory of TypeScript model files into a SQLite or Postgres schema, a REST API, a console, and auth — with composable pipelines wherever you need custom logic.
+The fastest path is four commands and a running app:
+
+```sh
+mkdir my-app && cd my-app
+bunx @egig/ratchet init
+bun install
+bun run dev
+```
+
+Open `http://localhost:3000` for the site and `http://localhost:3000/console` for the admin, where your first visit creates your login. Building with a coding agent? Read [Building with a coding agent](/docs/coding-agents) next. The rest of this page walks through what's in the project and how the pieces fit.
 
 ## Prerequisites
 
@@ -17,7 +26,7 @@ That's it — a new project defaults to a local SQLite file (`./local.db`), crea
 bunx @egig/ratchet init
 ```
 
-This writes `package.json`, `tsconfig.json`, `ratchet.config.ts`, `models/example.model.ts`, `migrations/`, and a `.gitignore` into the current directory. It never overwrites a file that's already there, so it's safe to re-run in a partially set-up directory.
+This writes a complete starter project into the current directory: `package.json`, `tsconfig.json`, `ratchet.config.ts`, starter models and pages, `seed.ts` sample data, `migrations/`, a `.gitignore`, and the coding-agent guide (`AGENTS.md`, `CLAUDE.md`, `.claude/skills/`). It never overwrites a file that's already there, so it's safe to re-run in a partially set-up directory.
 
 `ratchet.config.ts` points at your models and where generated output should go:
 

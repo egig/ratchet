@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Ratchet is now positioned as the backend starter kit your coding agent already understands: one command to a running app, then built by describing changes to an agent (Claude Code, Cursor, Codex) or by hand. The README, docs home, Getting Started, and the new [Building with a coding agent](https://egig.github.io/ratchet/docs/coding-agents) page reflect this.
+- `ratchet init` now scaffolds a coding-agent guide: `AGENTS.md` (commands, layout, rules, recipes), a `CLAUDE.md` that imports it, and three agent skills under `.claude/skills/` (`add-model`, `add-page`, `add-logic`). It also writes `seed.ts` sample data, adds `check`, `seed`, and `create-admin` scripts to `package.json`, and its closing message is now just `bun install && bun run dev`.
+- `ratchet dev` also watches `seed.ts` and runs it after every schema sync. When a sync fails, it prints the error with a fix hint, keeps the last good server running, and retries on the next save, including when the very first sync fails.
+- CLI errors now print as `error: …` followed by a `fix: …` line with a concrete next step for common mistakes (unknown reference target, `required` together with `default`, a misplaced Domain, a schema out of date, a port in use, …). A model file that throws while loading is named in the error.
+- **Breaking:** on SQLite, `field.enum()` no longer emits a database `CHECK` constraint. Enum values are still enforced by the API validators. Existing SQLite databases drop the constraints on their next `push` or migration. Postgres is unchanged.
+
+### Added
+
+- `ratchet seed`: runs the project's `seed.ts`. `defineSeed` and `createSeedContext` are exported from `@egig/ratchet/core`. `insert(model, values)` validates against the model's create schema; `isEmpty(model)` guards against duplicates.
+- `ratchet check`: validates models (regenerating `.ratchet/` without writing migrations), type-checks the project, and runs `bun test` when tests exist. Prints one PASS/FAIL/SKIP line per step and exits non-zero on failure.
+
 ### Fixed
+
+- `ratchet dev` regenerated from stale models after an edit. Bun caches ES modules by URL, so re-importing a changed `*.model.ts` inside the long-lived `dev` process returned the old definition, and the new schema was never pushed. Each sync now runs in a fresh process.
+- `ratchet dev` on SQLite rebuilt every table on each sync and failed when a model gained a column (`SQLITE_ERROR: no such column`). The cause was drizzle-kit misreading SQLite `CHECK` constraints; see the **Breaking** entry above.
+- `ratchet dev` treated a failed `drizzle-kit push` as success: push can print a database error and still exit 0. Database errors in push output now fail the sync.
 
 - Agent chat: a failed turn no longer dumps the raw provider error (often a whole HTTP/JSON response body) into the chat bubble. The full error — stack and `cause` included — is now logged server-side (`[automation] chat turn failed …`); the chat shows a single clean line, with a plain-language explanation for the common cases (bad API key, rate limit / quota, provider outage, unreachable provider, oversized conversation, unknown model) and a generic "see the server logs" fallback otherwise.
 - `ratchet serve`/`dev`: with a `routes/` site opted in, the SSR handler was unreachable — a separate `publicDir` router mounted at `/` matched every request first and the local `App` never falls through to a second `/` mount, so every non-static path 404'd. `publicDir` serving is now folded into `createWebRouter`.
