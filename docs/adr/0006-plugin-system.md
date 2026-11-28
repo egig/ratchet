@@ -4,7 +4,7 @@ Agents, chat and workflows were built into `@egig/ratchet`. Every app paid for t
 assistant-ui, Inngest and React Flow were core dependencies, their tables were always generated,
 and core hard-wired them in codegen (`BUILTIN_MODELS`), the server mount order, first-admin setup
 (the default agent), the console routes and the console/workspace chat panels. We moved them into
-`@egig/ratchet-automation` (developed in `plugins/automation/`, published from its own repo) and
+`@egig/ratchet-automation`, its own repo (`egig/ratchet-automation`), and
 added a general plugin contract (`src/plugin/`) that core uses to wire any feature package.
 
 Decisions, and why:
@@ -20,8 +20,7 @@ Decisions, and why:
 - **Plugins get a `PluginContext`, not core's internals as package exports.** Its `kit` groups the
   persistence, query, access, HTTP and serialization helpers core's own routers use, so plugin
   reads and writes get identical validation and field-level access. Core can reshape its files
-  freely as long as that object's shape holds. A grep check (`scripts/check-plugin-boundary.ts`)
-  stops in-repo plugin code from reaching into `src/` by relative path.
+  freely as long as that object's shape holds.
 - **Plugin models are scanned like built-ins.** `module` plays `builtinPackage`'s role: generated
   files import each model from the plugin package by name. Plugin tables are migrated by the
   consumer's own drizzle-kit journal, so adding a plugin is just another reviewed migration. All

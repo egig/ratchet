@@ -137,6 +137,12 @@ describe('plugin contract — createRatchetApp', () => {
       /would shadow the generic '\/api\/gadgets'/,
     );
 
+    // a hidden model has no generic routes, so its own plugin may serve it under the same segment
+    const Hidden = defineModel('hiddens', { api: { hidden: true }, fields: { name: field.string() } });
+    const owning = fakePlugin({ routes: () => [{ prefix: '/api/hiddens', app: routerReplying('own') }] });
+    const app = await createRatchetApp({ db, bundle: { models: { hiddens: Hidden }, domains: {}, plugins: [owning] } });
+    expect(await (await app.request('/api/hiddens/ping')).json()).toEqual({ body: 'own' });
+
     const reserved = fakePlugin({ routes: () => [{ prefix: '/api/auth', app: new App() }] });
     await expect(createRatchetApp({ db, bundle: { models: {}, domains: {}, plugins: [reserved] } })).rejects.toThrow(/reserved/);
 

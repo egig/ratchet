@@ -44,7 +44,7 @@ bun run docs:build
 
 ### DB-backed tests silently skip
 
-Several suites (`router`, `auth`, `workspace`, `automation-*`, `site-assets`, ...) read
+Several suites (`router`, `auth`, `workspace`, `site-assets`, ...) read
 `process.env.DATABASE_URL` and `describe.skip` when it's unset — a bare `bun test` passes without
 exercising them. To run the full suite, point `DATABASE_URL` at a **throwaway** database (each suite
 creates and drops its own tables):
@@ -170,11 +170,11 @@ Feature packages plug in through `RatchetPlugin` (`ratchet.config.ts` → `plugi
 models/domains/forms, `routes(ctx)`, `decorateDb`, `onSetup` (inside the first-admin tx),
 `service`, `requires`/`optional`, console module(s) via the `ratchet:plugins` virtual module, and
 Tailwind inputs. Plugins get a `PluginContext` whose `kit` holds core's persistence/access/query
-helpers — **never** import `src/` internals from plugin code (`scripts/check-plugin-boundary.ts`,
-part of `bun run typecheck`, enforces it). The automation plugin (agents, chat, workflows) lives
-in [plugins/automation/](plugins/automation/) as `@egig/ratchet-automation`; root `tsconfig.json`
-`paths` map `@egig/ratchet/*` onto `src/` so it type-checks and tests against the working tree.
-Its suites run as part of the root `bun test`.
+helpers — plugin code must only import the public `@egig/ratchet/*` entry points, never `src/`
+internals. `apiVersion` (`PLUGIN_API_VERSION`) gates compatibility; bump it when `PluginContext`
+or `RatchetPlugin` change shape. The automation plugin (agents, chat, workflows) is
+`@egig/ratchet-automation`, its own repo (sibling checkout `../ratchet-automation`, linked via
+`link:@egig/ratchet`). `test/plugin-contract.test.ts` covers the contract with a fake plugin.
 
 ### Built-in feature packages
 

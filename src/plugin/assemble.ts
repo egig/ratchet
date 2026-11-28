@@ -47,7 +47,10 @@ function assertValidPrefixes(routes: Array<PluginRoute & { plugin: string }>, mo
       throw new Error(`plugin '${plugin}': route prefix '${prefix}' is reserved by @egig/ratchet`);
     }
     const segment = prefix.split('/')[2]!;
-    if (models[segment]) {
+    // an `api.hidden` model has no generic routes (create-router 404s it), so there's nothing to
+    // shadow — that's how a plugin serves its own model through a dedicated router
+    // (e.g. automation's `workflows` model behind `/api/workflows`)
+    if (models[segment] && !models[segment]!.api?.hidden) {
       throw new Error(
         `plugin '${plugin}': route prefix '${prefix}' would shadow the generic '/api/${segment}' routes of model '${segment}' — rename the model or the prefix`,
       );
