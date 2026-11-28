@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** agents, chat, and workflows moved out of `@egig/ratchet` into the [automation plugin](https://egig.github.io/ratchet/docs/automation), `@egig/ratchet-automation`. To keep them, run `bun add @egig/ratchet-automation`, add `plugins: [automation()]` to `ratchet.config.ts`, and move the top-level `workflows: { ... }` option into `automation({ workflows: { ... } })`. Table names and columns are unchanged, so no data migration is needed. Without the plugin, `ratchet generate` emits a migration that drops the `agents`, `chats`, `messages`, `providers`, and `workflow*` tables, so review it before you apply it.
+  - **Breaking:** the `@egig/ratchet/automation` and `@egig/ratchet/workflows` entry points and the `workflows` config option are removed. Their exports now come from `@egig/ratchet-automation`.
+  - **Breaking:** `createRatchetApp` no longer accepts `workflows`. Plugins arrive through the generated bundle (`bundle.plugins`).
+  - **Breaking:** first-admin setup no longer creates the `Ratchet` agent by itself. The automation plugin creates it in its `onSetup` hook.
+  - `@egig/ratchet` no longer depends on LangChain, assistant-ui, Inngest, or React Flow, so an app without the plugin installs and bundles none of them.
+  - The console's chat toggle and side panel appear only when a plugin fills that panel slot.
+
 - **Breaking:** authentication is now [better-auth](https://www.better-auth.com) (see [Auth](https://egig.github.io/ratchet/docs/auth) and ADR 0005). Roles, permissions, field grants, and ownership scope are unchanged.
   - **Breaking:** `/api/auth/register`, `/login`, `/logout`, and `PATCH /api/auth/me` are removed. Use better-auth's `/api/auth/sign-up/email`, `/sign-in/email`, `/sign-out`, `/change-email`, and `/change-password`. Their responses are bare objects and errors are `{ code, message }`. `GET /api/auth/me` and `/api/auth/setup` keep their shapes.
   - **Breaking:** passwords moved from `users.password_hash` to the new `accounts` table (`providerId: 'credential'`). Existing hashes still verify, but the generated migration needs a data step added by hand before it drops the column — see "Upgrading from the built-in auth" in the Auth docs.
@@ -25,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** on SQLite, `field.enum()` no longer emits a database `CHECK` constraint. Enum values are still enforced by the API validators. Existing SQLite databases drop the constraints on their next `push` or migration. Postgres is unchanged.
 
 ### Added
+
+- Plugins: list feature packages under `plugins` in `ratchet.config.ts`. A plugin can contribute models, Domains, console forms, API routes (mounted between `/api/auth` and `/api/:model`), a database decorator, first-admin setup hooks, services for other plugins, and console pages and side panels. See [Plugins](https://egig.github.io/ratchet/docs/plugins). Write one with `definePlugin` from the new `@egig/ratchet/plugin`. Ratchet rejects a plugin route prefix that would shadow a model, and a plugin built for another plugin API version.
+- `@egig/ratchet/testing`: `connectTestDb` and `testToolkit` for plugin test suites.
+- `@egig/ratchet/console/client` now also exports the console icons, `apiRequest`, `queryKeys`, `ModalDialog`, the `ConsoleModelMeta` types, and the `ConsolePlugin` contract.
+- `@egig/ratchet/router` now exports the list-query types (`FilterNode`, `ParsedListQuery`, …).
 
 - `auth` in `ratchet.config.ts` (and `createRatchetApp({ auth })`): better-auth's options, passed through — social sign-in (`socialProviders`), email verification and password reset callbacks, session lifetimes, rate limiting, plugins. `ratchet build` bundles the config into `dist/server.js` when it's set.
 - Built-in `Account` and `Verification` models (`accounts`, `verifications` tables), and `name`, `emailVerified`, `image` on `User`. `Session` gains `ipAddress` and `userAgent`.

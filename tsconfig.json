@@ -14,8 +14,20 @@
     "resolveJsonModule": true,
     "declaration": true,
     "sourceMap": true,
-    "noUncheckedIndexedAccess": true
+    "noUncheckedIndexedAccess": true,
+    // the in-repo plugin (plugins/automation) imports the framework by its published name; map
+    // those specifiers onto src/ so it type-checks and tests against the working tree
+    "paths": {
+      "@egig/ratchet/core": ["./src/core/index.ts"],
+      "@egig/ratchet/router": ["./src/router/index.ts"],
+      "@egig/ratchet/auth": ["./src/auth/index.ts"],
+      "@egig/ratchet/server": ["./src/server/index.ts"],
+      "@egig/ratchet/plugin": ["./src/plugin/index.ts"],
+      "@egig/ratchet/workspace": ["./src/workspace/index.ts"],
+      "@egig/ratchet/testing": ["./src/testing/index.ts"],
+      "@egig/ratchet/console/client": ["./src/console/client/index.ts"]
+    }
   },
-  "include": ["src", "example", "test"],
+  "include": ["src", "example", "test", "plugins"],
   "exclude": ["dist", "node_modules", "example/.ratchet", "example/deploy", "src/cli/stubs"]
 }

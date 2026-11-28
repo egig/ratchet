@@ -44,7 +44,7 @@ export interface OperationConsoleOptions {
 export interface CustomOperationDefinition {
   pipeline: PipelineFn;
   /** one-line explanation of what this operation does — shown as console help and, when the
-   * operation is exposed to an `Agent` as a tool (src/automation/tool.ts), used verbatim as the
+   * operation is exposed to an `Agent` as a tool (the automation plugin's `agents/tool.ts`), used verbatim as the
    * tool description a chatting model reads to decide when to call it. Falls back to
    * `console.label` then a humanized operation name. */
   description?: string;
@@ -64,7 +64,7 @@ export type OperationEntry = PipelineFn | CustomOperationDefinition;
  * the fixed builtin keys (typed separately below); `read` and `*` are reserved by the permission
  * system (`ratchet/auth`'s `validateRolePermissions`); `query` is reserved by a workflow's Model
  * Operation step, whose `operation` field also accepts the built-in record actions alongside
- * custom operation names (`BUILTIN_ACTIONS`, workflows/graph.ts); `upload` is reserved because
+ * custom operation names (`BUILTIN_ACTIONS`, the automation plugin's `workflows/actions.ts`); `upload` is reserved because
  * `POST /:model/:field/upload` (router/create-router.ts) already occupies that exact path shape
  * for models with a `file` field. */
 export const RESERVED_OPERATION_NAMES: ReadonlySet<string> = new Set([
@@ -106,10 +106,10 @@ export interface ApiModelOptions {
    * unknown model name) — for a model whose only legitimate access path is a dedicated,
    * auth-scoped router. `console.hidden` alone doesn't do this: it only hides a model from the
    * console sidebar/`/meta/models`, the model stays reachable at `/api/:model` regardless. Set on
-   * `Chat`/`Message` (src/automation/models): a `Message`'s real owner is indirect — whoever owns
+   * `Chat`/`Message` (the automation plugin): a `Message`'s real owner is indirect — whoever owns
    * its *parent* `Chat` — which the generic ownership mechanism (`ownerFieldOf`, direct column
    * equality on the row itself) can't express; only `Chat`/`Message`'s own
-   * `/api/automation/chats/*` router (src/automation/router.ts) enforces that. `Agent`/`Role` stay
+   * `/api/automation/chats/*` router (the automation plugin's `agents/router.ts`) enforces that. `Agent`/`Role` stay
    * generic-REST-readable — their default `createdById` ownership is available like any model's,
    * just not restrictive enough on its own to replace a real permission grant for shared config
    * everyone with access needs to see. */
@@ -119,7 +119,7 @@ export interface ApiModelOptions {
    * only needed when the real owner differs from whoever created the row (e.g. `Workspace`'s
    * `userId` — a self-registered user's default workspace is provisioned with no `ctx.user` at
    * all, so `createdById` would be null there). Every route (`create-router.ts`, and
-   * `automation/tool.ts`'s agent-tool executor) enforces ownership automatically via
+   * the automation plugin's agent-tool executor) enforces ownership automatically via
    * `core/pipeline.ts`'s `forceOwnerOnCreate`/`assertOwnsRow` once it resolves the caller's
    * `scope` for the action — a role's grant restricts this to `'own'` rows (the default when
    * unset) or opens it to `'any'` (`Role.permissions`, ratchet/auth); a model author never wires
@@ -140,7 +140,7 @@ export interface ModelDefinition {
   tableName: string;
   /** one-line explanation of what a row of this model represents — surfaced in `/meta/models` for
    * the console, and prepended to the description of every `create_`/`update_`/`remove_` tool an
-   * `Agent` is granted for this model (src/automation/tool.ts) so a chatting model has context
+   * `Agent` is granted for this model (the automation plugin's `agents/tool.ts`) so a chatting model has context
    * beyond the bare resource name. */
   description?: string;
   fields: Record<string, FieldDefinition>;

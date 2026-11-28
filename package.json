@@ -24,7 +24,6 @@
     "./server": "./dist/server/index.js",
     "./auth": "./dist/auth/index.js",
     "./auth/console-forms": "./dist/auth/console-forms.js",
-    "./automation": "./dist/automation/index.js",
     "./workspace": "./dist/workspace/index.js",
     "./web": "./dist/web/index.js",
     "./web/router": "./dist/web/router.js",
@@ -36,11 +35,12 @@
     "./storage/s3": "./dist/core/storage-s3.js",
     "./storage/gcs": "./dist/core/storage-gcs.js",
     "./storage/azure": "./dist/core/storage-azure.js",
-    "./workflows": "./dist/workflows/index.js"
+    "./plugin": "./dist/plugin/index.js",
+    "./testing": "./dist/testing/index.js"
   },
   "scripts": {
     "build": "bun scripts/build.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p example/deploy/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p example/deploy/tsconfig.json && bun scripts/check-plugin-boundary.ts",
     "test": "bun test",
     "cli": "cd example && bun ../src/cli/bin.ts",
     "serve": "cd example && bun ../src/cli/bin.ts serve",

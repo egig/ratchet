@@ -15,9 +15,11 @@
     "router",
     "auth",
     "console",
-    "workflows",
     "web",
     "deploy",
+    "---Plugins---",
+    "plugins",
+    "automation",
     "---Project---",
     "changelog"
   ]

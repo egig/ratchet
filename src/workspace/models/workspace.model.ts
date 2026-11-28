@@ -37,9 +37,9 @@ export const forbidLockedInUpdate: PipelineFn = (ctx) => {
 
 /**
  * A named collection of `WorkspaceView` tabs (workspace-view.model.ts), owned by exactly one
- * user. Unlike `Chat`/`Message` (src/automation/models), this stays reachable through the generic
+ * user. Unlike `Chat`/`Message` (the automation plugin), this stays reachable through the generic
  * `/api/:model` router — `api: { ownerField: 'userId' }` is what keeps that safe, rather than
- * needing a dedicated router: every entry point (`create-router.ts`, `automation/tool.ts`)
+ * needing a dedicated router: every entry point (`create-router.ts`, the automation plugin's `agents/tool.ts`)
  * enforces ownership on every route, read or write, once it resolves the caller's `scope`
  * (`Role.permissions`, ratchet/auth) — a model author never wires an ownership check by hand.
  *

@@ -6,7 +6,7 @@ import { useModels } from './models.js';
 import { useAuth } from './auth.js';
 import { queryKeys } from './query-keys.js';
 import { WorkspaceTabs } from './WorkspaceTabs.js';
-import { WorkspaceChatPanel } from './WorkspaceChatPanel.js';
+import { useConsolePanel } from './plugins.js';
 import { ModelFormDialog } from './ModelFormDialog.js';
 import { BrandMark } from './BrandMark.js';
 import { ConsoleIcon, LockClosedIcon, LockOpenIcon, LogOutIcon, ProfileIcon } from './icons.js';
@@ -20,8 +20,8 @@ interface WorkspaceOption {
   chatEnabled: boolean;
 }
 
-// shared across every workspace — the chat panel's open/closed state is a UI preference, not
-// something scoped per workspace.
+// shared across every workspace — the side panel's open/closed state is a UI preference, not
+// something scoped per workspace. Same key as `Layout`'s shell panel (the name predates the slot).
 const CHAT_OPEN_STORAGE_KEY = 'ratchet:workspace-chat-open';
 
 /** Avatar-only account control for the workspace header — click opens a dropdown that collapses
@@ -111,6 +111,7 @@ export function WorkspacePage() {
   const { user, logout } = useAuth();
   const queryClient = useQueryClient();
   const [refreshSignal, setRefreshSignal] = useState(0);
+  const panel = useConsolePanel('workspacePanel');
   const [chatOpen, setChatOpen] = useState(() => {
     try {
       return localStorage.getItem(CHAT_OPEN_STORAGE_KEY) !== 'false';
@@ -145,7 +146,8 @@ export function WorkspacePage() {
   const activeWorkspace = workspaces?.find((w) => w.id === workspaceId) ?? null;
   // a persistent per-workspace setting (workspace.model.ts's `chatEnabled`), distinct from the
   // per-browser `chatOpen` show/hide toggle — when off, the panel and its toggle are gone entirely.
-  const chatAvailable = activeWorkspace?.chatEnabled ?? true;
+  // No plugin filling the workspace panel slot means there's nothing to show either way.
+  const chatAvailable = !!panel && (activeWorkspace?.chatEnabled ?? true);
 
   // `lock`/`unlock` are custom operations (see workspace.model.ts) — `locked` itself is no longer
   // writable via a plain PATCH (`forbidLockedInUpdate`), so this always goes through one or the
@@ -210,13 +212,15 @@ export function WorkspacePage() {
         <WorkspaceTabs
           workspaceId={workspaceId}
           refreshSignal={refreshSignal}
-          chatOpen={chatOpen}
-          chatAvailable={chatAvailable}
-          onToggleChat={() => setChatOpen((v) => !v)}
+          panelToggle={
+            panel && chatAvailable
+              ? { open: chatOpen, label: panel.label, icon: panel.icon, onToggle: () => setChatOpen((v) => !v) }
+              : null
+          }
           locked={activeWorkspace?.locked ?? false}
         />
-        {chatOpen && chatAvailable && (
-          <WorkspaceChatPanel workspaceId={workspaceId} onTurnDone={() => setRefreshSignal((n) => n + 1)} />
+        {panel && chatOpen && chatAvailable && (
+          <panel.component workspaceId={workspaceId} onWorkspaceChanged={() => setRefreshSignal((n) => n + 1)} />
         )}
       </div>
 

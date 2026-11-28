@@ -146,7 +146,7 @@ export function forceOwnerOnCreate(model: ModelDefinition, input: Record<string,
 
 /** For `update`/`remove`/a custom operation, when the resolved `scope` for that action is
  * `'own'`: fetches the row and 404s (not 403 — "don't reveal existence", same as
- * `automation/pipeline.ts`'s `assertOwnsChat`) unless it belongs to `userId`. Callers that already
+ * the automation plugin's `assertOwnsChat`) unless it belongs to `userId`. Callers that already
  * have the row in hand (a `GET` route) should check `row[ownerFieldOf(model)] !== userId` directly
  * instead of fetching again. */
 export async function assertOwnsRow(db: AnyDb, model: ModelDefinition, id: string, userId: string): Promise<void> {

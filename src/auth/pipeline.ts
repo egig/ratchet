@@ -121,7 +121,7 @@ export function requirePermission(resource: string, action: string): PipelineFn 
  * `OperationContext` at all — the generic router's `GET` list/detail routes have no per-model
  * `read` operation to compose a pipeline fn into (unlike create/update/remove), so the
  * implicit read gate (`create-router.ts`) calls this directly instead, as does
- * `automation/tool.ts`'s agent-tool executor (the other caller that bypasses the router entirely).
+ * the automation plugin's agent-tool executor (the other caller that bypasses the router entirely).
  * Resolves the session user and checks their role holds `(resource, action)` — either side may be
  * `*` — the same rule `requirePermission` enforces. Throws 401 (no/expired session) or 403
  * (session valid, permission missing), same codes as `requirePermission`.
@@ -192,7 +192,7 @@ export function fieldKeyForInput(model: ModelDefinition, inputKey: string): stri
 
 /** Rejects the whole write (naming every offending key) if `input` touches a field outside
  * `granted` — used at every write boundary that enforces field-level permission: the generic
- * router's `POST`/`PATCH` (`create-router.ts`) and builtin agent tool calls (`automation/tool.ts`'s
+ * router's `POST`/`PATCH` (`create-router.ts`) and builtin agent tool calls (the automation plugin's `agents/tool.ts`'s
  * `executeAgentTool`, which invokes a model's `create`/`update` pipeline exactly like the
  * REST route does and needs the identical check). Rejects rather than silently dropping disallowed
  * keys, so a caller's local state never disagrees with the server about what actually got written. */

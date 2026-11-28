@@ -1,7 +1,5 @@
-import { workflowModels } from '../workflows/models.js';
 import { User, Role, Session, Account, Verification } from '../auth/models/index.js';
-import { Agent, Chat, Message, Provider } from '../automation/models/index.js';
-import { AutomationDomain } from '../automation/domain.js';
+import type { RatchetPlugin } from '../plugin/types.js';
 import { Workspace, WorkspaceView } from '../workspace/models/index.js';
 import type { ScannedModel } from './scan.js';
 import type { ScannedDomain } from './scan-domains.js';
@@ -16,32 +14,20 @@ import type { ScannedForm } from './scan-forms.js';
  * no on-disk folder for `folderDomainOf` to infer it from.
  */
 export const BUILTIN_MODELS: ScannedModel[] = [
-  ...workflowModels.map((model, i) => ({ filePath: '@egig/ratchet/workflows', exportName: ['Workflow','WorkflowVersion','WorkflowRun','WorkflowStep','WorkflowOutbox'][i]!, model, builtinPackage: '@egig/ratchet/workflows', domain: 'automation' })),
   { filePath: '@egig/ratchet/auth (User)', exportName: 'User', model: User, builtinPackage: '@egig/ratchet/auth', domain: 'auth' },
   { filePath: '@egig/ratchet/auth (Role)', exportName: 'Role', model: Role, builtinPackage: '@egig/ratchet/auth', domain: 'auth' },
   { filePath: '@egig/ratchet/auth (Session)', exportName: 'Session', model: Session, builtinPackage: '@egig/ratchet/auth', domain: 'auth' },
   { filePath: '@egig/ratchet/auth (Account)', exportName: 'Account', model: Account, builtinPackage: '@egig/ratchet/auth', domain: 'auth' },
   { filePath: '@egig/ratchet/auth (Verification)', exportName: 'Verification', model: Verification, builtinPackage: '@egig/ratchet/auth', domain: 'auth' },
-  { filePath: '@egig/ratchet/automation (Provider)', exportName: 'Provider', model: Provider, builtinPackage: '@egig/ratchet/automation', domain: 'automation' },
-  { filePath: '@egig/ratchet/automation (Agent)', exportName: 'Agent', model: Agent, builtinPackage: '@egig/ratchet/automation', domain: 'automation' },
-  { filePath: '@egig/ratchet/automation (Chat)', exportName: 'Chat', model: Chat, builtinPackage: '@egig/ratchet/automation', domain: 'automation' },
-  { filePath: '@egig/ratchet/automation (Message)', exportName: 'Message', model: Message, builtinPackage: '@egig/ratchet/automation', domain: 'automation' },
   { filePath: '@egig/ratchet/workspace (Workspace)', exportName: 'Workspace', model: Workspace, builtinPackage: '@egig/ratchet/workspace', domain: 'workspace' },
   { filePath: '@egig/ratchet/workspace (WorkspaceView)', exportName: 'WorkspaceView', model: WorkspaceView, builtinPackage: '@egig/ratchet/workspace', domain: 'workspace' },
 ];
 
 /**
- * The framework's own built-in Domains — same reasoning as `BUILTIN_MODELS` above: the Automation
- * Domain's `consoleMenu` (its Chat link) has no on-disk `*.domain.ts` file to be scanned from.
+ * The framework's own built-in Domains — none today (feature packages contribute theirs through
+ * the plugin contract, see `pluginScanEntries`). Kept so a future core Domain has a home.
  */
-export const BUILTIN_DOMAINS: ScannedDomain[] = [
-  {
-    filePath: '@egig/ratchet/automation (AutomationDomain)',
-    exportName: 'AutomationDomain',
-    domain: AutomationDomain,
-    builtinPackage: '@egig/ratchet/automation',
-  },
-];
+export const BUILTIN_DOMAINS: ScannedDomain[] = [];
 
 /**
  * The framework's own built-in console forms — `generate()` merges these into every consuming
@@ -61,3 +47,30 @@ export const BUILTIN_FORMS: ScannedForm[] = [
     exportName: 'RoleForm',
   },
 ];
+
+/**
+ * A plugin's models/domains/forms (`RatchetPlugin`, src/plugin/types.ts) as the same scan entries
+ * a builtin gets — `module` plays `builtinPackage`'s role (a bare specifier the generated files
+ * import each export from by name) and `domain` is assigned explicitly, as for builtins.
+ */
+export function pluginScanEntries(plugins: readonly RatchetPlugin[]): {
+  models: ScannedModel[];
+  domains: ScannedDomain[];
+  forms: ScannedForm[];
+} {
+  const models: ScannedModel[] = [];
+  const domains: ScannedDomain[] = [];
+  const forms: ScannedForm[] = [];
+  for (const p of plugins) {
+    for (const [exportName, model] of Object.entries(p.models ?? {})) {
+      models.push({ filePath: `${p.module} (${exportName})`, exportName, model, builtinPackage: p.module!, domain: p.domain });
+    }
+    for (const [exportName, domain] of Object.entries(p.domains ?? {})) {
+      domains.push({ filePath: `${p.module} (${exportName})`, exportName, domain, builtinPackage: p.module! });
+    }
+    for (const f of p.forms ?? []) {
+      forms.push({ filePath: `${f.module} (${f.exportName})`, modelName: f.modelName, builtinPackage: f.module, exportName: f.exportName });
+    }
+  }
+  return { models, domains, forms };
+}

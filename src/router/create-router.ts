@@ -73,7 +73,7 @@ async function resolveFieldAccess(
 
 function resolveModel(registry: Record<string, ModelDefinition>, name: string): ModelDefinition {
   const model = registry[name];
-  // a model with `api.hidden` (e.g. Chat/Message, src/automation/models) 404s exactly like an
+  // a model with `api.hidden` (e.g. the automation plugin's Chat/Message) 404s exactly like an
   // unknown name — this router has no per-row ownership check, so it must not be reachable at
   // all for a model whose only legitimate access path is a dedicated, auth-scoped router.
   if (!model || model.api?.hidden) throw new PipelineError({ code: 'MODEL_NOT_FOUND', status: 404 });

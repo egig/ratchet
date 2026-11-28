@@ -1,0 +1,111 @@
+---
+title: Plugins
+description: Add feature packages to a Ratchet app, or write your own.
+---
+
+A plugin is a feature package — its own models, API routes, and console UI — that you turn on in `ratchet.config.ts`. Agents, chat and workflows ship this way as the [automation plugin](/docs/automation), so an app that doesn't need them carries none of their code or dependencies.
+
+## Using a plugin
+
+Install the package, then list it under `plugins`:
+
+```sh
+bun add @egig/ratchet-automation
+```
+
+```ts
+// ratchet.config.ts
+import { defineConfig } from '@egig/ratchet/core';
+import { automation } from '@egig/ratchet-automation';
+
+export default defineConfig({
+  db: { driver: 'sqlite', url: 'file:./local.db' },
+  plugins: [automation()],
+});
+```
+
+Run `ratchet generate`. The plugin's models join your own in `.ratchet/` and in the generated migration, so review and apply it with `ratchet migrate` as usual. Plugins mount in the order you list them.
+
+Plugin options can hold functions and secrets, so the config module itself is bundled into every server entry: the generated `.ratchet/app.ts` imports `ratchet.config.ts` and passes its `plugins` to `createRatchetApp`. Hand-written Cloudflare or Vercel entries pick plugins up from that same `bundle` without changes. Read secrets from `process.env` when the server starts, not at build time.
+
+## What a plugin can contribute
+
+| | Field | Notes |
+| --- | --- | --- |
+| Models | `models`, `module`, `domain` | `module` is the package specifier the generated files import each model from by name. All of a plugin's models belong to `domain`. |
+| Domains | `domains` | Domain definitions, imported from `module` the same way. |
+| Console forms | `forms` | A custom create/edit form for one of the plugin's models. Your own `<model>.form.tsx` still wins. |
+| API routes | `routes(ctx)` | `[{ prefix, app }]`. Prefixes must be `/api/<segment>`, are mounted after `/api/auth` and before `/api/:model`, and may not shadow a model name, `/api/auth`, or another plugin. |
+| DB decoration | `decorateDb(db, ctx)` | Wraps the database handle before any router is built — for example to observe every mutation. |
+| Setup | `onSetup({ tx, rootRoleId, userId }, ctx)` | Runs inside the first-admin transaction (`/api/auth/setup`, `ratchet create-admin`). |
+| Services | `service(ctx)` | A value other plugins read as `ctx.plugins[name]`. |
+| Dependencies | `requires`, `optional` | `requires` fails boot when a plugin is missing. `optional` documents a soft dependency; its service may be `undefined`. |
+| Console UI | `console` | Browser module specifier(s) default-exporting a `ConsolePlugin` (below). |
+| Console styles | `consoleStyles` | `{ source, css }`: a directory Tailwind scans for class names, and extra stylesheets to import. |
+
+Every plugin declares `apiVersion: PLUGIN_API_VERSION`. Ratchet refuses to load a plugin written for a different version, so a mismatch fails at boot with a clear message.
+
+## Writing a plugin
+
+```ts
+import { defineModel, field } from '@egig/ratchet/core';
+import { App } from '@egig/ratchet/router';
+import { definePlugin, PLUGIN_API_VERSION } from '@egig/ratchet/plugin';
+
+export const Note = defineModel('notes', { fields: { body: field.text({ required: true }) } });
+
+export function notes() {
+  return definePlugin({
+    name: 'notes',
+    apiVersion: PLUGIN_API_VERSION,
+    module: '@acme/ratchet-notes', // this package — it must export `Note` by name
+    domain: 'notes',
+    models: { Note },
+    routes: (ctx) => {
+      const app = new App();
+      app.get('/count', async (c) => {
+        await ctx.kit.access.resolveSessionUser(ctx.db, c.req.raw);
+        const page = await ctx.kit.data.listRows(ctx.db, Note, ctx.models, {
+          limit: 1, offset: 0, sort: [], cursorMode: false, includeDeleted: false, include: [], filters: [],
+        });
+        return c.json({ data: page.mode === 'offset' ? page.total : null });
+      });
+      return [{ prefix: '/api/notes-stats', app }];
+    },
+  });
+}
+```
+
+A plugin's models also get the generic `/api/:model` routes and console screens, with the same permissions as your own models.
+
+### `PluginContext`
+
+`routes`, `decorateDb`, `service` and `onSetup` receive the same context:
+
+- `db`: the app's database handle, already wrapped by every plugin's `decorateDb`.
+- `models`, `domains`: the full registries.
+- `env`: `'development'` or `'production'`.
+- `plugins`: other plugins' services, by plugin name.
+- `kit`: the helpers Ratchet's own routers use, grouped as `data` (row persistence), `query` (list-query parsing and read-side field access), `access` (sessions, grants, field-level checks), `http` (JSON body and error responses), and `serialize`. Every function takes its `db` explicitly, so you can pass a transaction.
+
+Import everything else from the public entry points: `@egig/ratchet/core`, `/router`, `/auth`, `/plugin`, and, in tests, `/testing` (`connectTestDb`, and `testToolkit`, the same `kit` without assembling an app). Don't import Ratchet's internal files.
+
+### Console UI
+
+The `console` module runs in the browser. Import only React, `react-router`, `@tanstack/react-query`, and `@egig/ratchet/console/client` there, never server code.
+
+```tsx
+import { SparklesIcon, type ConsolePlugin } from '@egig/ratchet/console/client';
+
+const notesConsole: ConsolePlugin = {
+  name: 'notes',
+  routes: [{ path: 'notes-board', element: <NotesBoard /> }],
+  shellPanel: { label: 'Toggle notes', icon: SparklesIcon, component: NotesPanel },
+};
+export default notesConsole;
+```
+
+- `routes` render inside the console shell and match before the generic `:model/*` screen, so a path equal to a model name replaces that model's list screen.
+- `shellPanel` is the console's right-side panel. `workspacePanel` is the workspace screen's, and receives `{ workspaceId, onWorkspaceChanged }`. Only the first plugin that fills a slot is used, and its toggle button only appears when the slot is filled.
+
+Declare `react`, `react-router`, `@tanstack/react-query` and `@egig/ratchet` as **peer** dependencies, so the console bundle contains one copy of each.

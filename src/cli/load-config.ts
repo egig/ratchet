@@ -29,5 +29,7 @@ export function resolveDirs(cwd: string, config: FrameworkConfig) {
     publicDir: path.resolve(cwd, config.publicDir ?? 'public'),
     consolePath: resolveConsolePath(config),
     brand: config.brand ?? {},
+    /** for the console build's Tailwind inputs (`RatchetPlugin.consoleStyles`) */
+    plugins: config.plugins ?? [],
   };
 }

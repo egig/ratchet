@@ -24,3 +24,10 @@ declare module 'ratchet:field-inputs' {
   import type { FieldRenderer } from './field-renderers.js';
   export const fieldInputs: Record<string, Record<string, FieldRenderer>>;
 }
+
+/** Same idea, for the generated `<generatedDir>/console-plugins.ts` (console-plugins-gen.ts) —
+ * every enabled plugin's console module, passed to `<ConsoleApp plugins={...} />`. */
+declare module 'ratchet:plugins' {
+  import type { ConsolePlugin } from './plugins.js';
+  export const consolePlugins: ConsolePlugin[];
+}

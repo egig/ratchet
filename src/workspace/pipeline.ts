@@ -3,8 +3,8 @@ import { fetchRow } from '../core/persistence.js';
 import type { UserRow } from '../auth/lookup.js';
 import { Workspace } from './models/workspace.model.js';
 
-/** Mirrors `automation/pipeline.ts`'s `assertOwnsChat` — reused both by `requireWorkspaceOwnership`
- * below and by the chat-context injection in `automation/router.ts`, which needs to check the same
+/** Mirrors the automation plugin's `assertOwnsChat` — reused both by `requireWorkspaceOwnership`
+ * below and by the chat-context injection in the automation plugin's `agents/router.ts`, which needs to check the same
  * thing before reading a workspace's views into a turn. */
 export function assertOwnsWorkspace(
   workspace: Record<string, unknown> | null,
@@ -24,7 +24,7 @@ export function assertOwnsWorkspace(
  *
  * Also enforces the parent workspace's `locked` flag on this write — a locked workspace's views
  * can't be created/updated/removed. This check lives here, not in `assertOwnsWorkspace`, because
- * that helper is also used read-only by `automation/router.ts`'s chat-context injection, which must
+ * that helper is also used read-only by the automation plugin's `agents/router.ts`'s chat-context injection, which must
  * keep working against a locked workspace. */
 export const requireWorkspaceOwnership: PipelineFn = async (ctx) => {
   const workspaceId = (ctx.input as { workspaceId?: string }).workspaceId ?? (ctx.doc?.workspaceId as string | undefined);

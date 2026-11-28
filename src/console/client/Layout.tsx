@@ -5,15 +5,16 @@ import { useModels } from './models.js';
 import { useDomains } from './domains.js';
 import { BrandMark } from './BrandMark.js';
 import { ChevronDownIcon, LogOutIcon, ProfileIcon, SettingsIcon, SparklesIcon, WorkspaceIcon } from './icons.js';
-import { ConsoleChatPanel } from './ConsoleChatPanel.js';
+import { useConsolePanel } from './plugins.js';
 import { ThemeToggle } from './ThemeToggle.js';
 import { Button } from './ui/button.js';
 import type { ConsoleModelMeta } from '../serialize-model.js';
 import type { ConsoleDomainMeta } from '../serialize-domain.js';
 
-// the chat panel's open/closed state is a per-browser UI preference, shared with the workspace
-// screen's own toggle (same key) so it stays consistent across both surfaces.
-const CHAT_OPEN_STORAGE_KEY = 'ratchet:workspace-chat-open';
+// the plugin side panel's open/closed state is a per-browser UI preference, shared with the
+// workspace screen's own toggle (same key) so it stays consistent across both surfaces. The key
+// predates the panel slot (it was the built-in chat's), kept so existing preferences carry over.
+const PANEL_OPEN_STORAGE_KEY = 'ratchet:workspace-chat-open';
 
 const navLinkClassName = ({ isActive }: { isActive: boolean }) =>
   `block truncate rounded-md px-3 py-1 text-sm ${
@@ -181,20 +182,22 @@ export function Layout() {
   const ungrouped = models.filter((model) => !model.domain);
   const hasModelSections = grouped.length > 0 || ungrouped.length > 0;
 
-  const [chatOpen, setChatOpen] = useState(() => {
+  const panel = useConsolePanel('shellPanel');
+  const PanelIcon = panel?.icon ?? SparklesIcon;
+  const [panelOpen, setPanelOpen] = useState(() => {
     try {
-      return localStorage.getItem(CHAT_OPEN_STORAGE_KEY) !== 'false';
+      return localStorage.getItem(PANEL_OPEN_STORAGE_KEY) !== 'false';
     } catch {
       return true;
     }
   });
   useEffect(() => {
     try {
-      localStorage.setItem(CHAT_OPEN_STORAGE_KEY, String(chatOpen));
+      localStorage.setItem(PANEL_OPEN_STORAGE_KEY, String(panelOpen));
     } catch {
       // ignore — e.g. private browsing with storage disabled
     }
-  }, [chatOpen]);
+  }, [panelOpen]);
 
   return (
     <div className="flex min-h-screen bg-muted">
@@ -251,22 +254,25 @@ export function Layout() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top header for the console content area — brand on the left, the theme/chat toggles on
-            the right. The chat panel mounts to the right of <main> (below this header) when open. */}
+        {/* Top header for the console content area — the theme toggle and, when a plugin fills the
+            shell panel slot (e.g. automation's chat), its toggle on the right. That panel mounts to
+            the right of <main> (below this header) when open. */}
         <header className="flex h-12 items-center border-b border-border bg-surface px-4">
           <div className="ml-auto flex items-center gap-1">
             <ThemeToggle />
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setChatOpen((v) => !v)}
-              aria-label="Toggle chat"
-              aria-pressed={chatOpen}
-              title="Toggle chat"
-              className={chatOpen ? 'bg-muted text-foreground' : 'text-muted-foreground'}
-            >
-              <SparklesIcon className="h-4 w-4" />
-            </Button>
+            {panel && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setPanelOpen((v) => !v)}
+                aria-label={panel.label}
+                aria-pressed={panelOpen}
+                title={panel.label}
+                className={panelOpen ? 'bg-muted text-foreground' : 'text-muted-foreground'}
+              >
+                <PanelIcon className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         </header>
 
@@ -275,7 +281,7 @@ export function Layout() {
             <Outlet />
           </main>
 
-          {chatOpen && <ConsoleChatPanel />}
+          {panel && panelOpen && <panel.component />}
         </div>
       </div>
     </div>

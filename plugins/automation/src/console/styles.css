@@ -1,0 +1,4 @@
+/* Extra console CSS for the workflow editor — `@import`ed into the console's CSS entry by
+   `RatchetPlugin.consoleStyles.css` (see ../index.ts). Utilities in this directory's `.tsx` are
+   picked up through `consoleStyles.source`. */
+@import "@xyflow/react/dist/style.css";

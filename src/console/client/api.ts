@@ -27,6 +27,12 @@ export class ApiRequestError extends Error {
   }
 }
 
+/** JSON request against the app's own API — unwraps `{ data }`, throws `ApiRequestError` on a
+ * non-2xx. Exported (as `apiRequest` from `@egig/ratchet/console/client`) for plugin console code. */
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  return request<T>(path, init);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -276,46 +282,4 @@ export function uploadDomainSettingsFile(domain: string, field: string, file: Fi
 export function hasPermission(permissions: AuthUser['permissions'], resource: string, action: string): boolean {
   const resourceNode = permissions[resource] ?? permissions['*'];
   return resourceNode !== undefined && (resourceNode[action] ?? resourceNode['*']) !== undefined;
-}
-
-export interface ChatSummary {
-  id: string;
-  agentId: string;
-  title: string | null;
-  status: 'active' | 'archived';
-  updatedAt: string;
-}
-
-export interface ChatMessageRow {
-  id: string;
-  role: 'user' | 'assistant' | 'tool';
-  /** assistant-ui message parts (see `src/automation/message-parts.ts`) — decoded by
-   * `src/console/client/chat/history.ts`. */
-  content: unknown[];
-  metadata: Record<string, unknown> | null;
-  createdAt: string;
-}
-
-/** `RemoteThreadListAdapter.list()`. */
-export function listChats(): Promise<ChatSummary[]> {
-  return request('/api/automation/chats');
-}
-
-/** `RemoteThreadListAdapter.initialize()` — creates a bare chat (no message, no stream). */
-export function createChat(input: { agentId: string; title?: string }): Promise<{ id: string }> {
-  return request('/api/automation/chats', { method: 'POST', body: JSON.stringify(input) });
-}
-
-/** `rename` / `archive` / `unarchive`. */
-export function patchChat(chatId: string, input: { title?: string; status?: 'active' | 'archived' }): Promise<unknown> {
-  return request(`/api/automation/chats/${encodeURIComponent(chatId)}`, { method: 'PATCH', body: JSON.stringify(input) });
-}
-
-export function deleteChat(chatId: string): Promise<unknown> {
-  return request(`/api/automation/chats/${encodeURIComponent(chatId)}`, { method: 'DELETE' });
-}
-
-/** history `load()`. */
-export function listChatMessages(chatId: string): Promise<ChatMessageRow[]> {
-  return request(`/api/automation/chats/${encodeURIComponent(chatId)}/messages`);
 }

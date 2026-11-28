@@ -15,6 +15,8 @@ export async function runGenerate(cwd: string): Promise<void> {
     generatedDir,
     routesDir,
     dialect: resolveDbConfig(config.db).driver,
+    plugins: config.plugins,
+    configFile: path.join(cwd, 'ratchet.config.ts'),
   });
 
   console.log(

@@ -1,6 +1,7 @@
 export { createApiRouter } from './create-router.js';
 export { listRows, getOneRow } from './list.js';
 export { parseListQuery, parseInclude } from './query.js';
+export type { FilterNode, FilterClause, FilterOp, ParsedListQuery, SortKey } from './query.js';
 export { assertReadFieldsAllowed, filterIncludedRelations } from './read-access.js';
 export { buildRegistryMap, buildDomainSettingsRegistryMap } from './registry-map.js';
 export { toErrorResponse } from './errors.js';
