@@ -1,4 +1,4 @@
-import { Route, Routes, useLocation, useParams } from 'react-router';
+import { Route, Routes, useLocation, useParams } from './router.js';
 import { useModels } from './models.js';
 import { RowTable } from './RowTable.js';
 import { ModelFormDialog } from './ModelFormDialog.js';

@@ -233,7 +233,7 @@ export function createConsoleRouter(
     return new Response(asset.body, { headers: { 'content-type': asset.contentType } });
   });
 
-  // catch-all, not just `/`: the SPA uses react-router's BrowserRouter (client-side, path-based
+  // catch-all, not just `/`: the SPA uses a browser-history router (`client/router.tsx`, path-based
   // routes like `${mountPath}/customers/:id`), so a hard refresh/deep link on any of those paths
   // must still resolve to the same shell — routing itself happens in the browser after it loads.
   app.get('/*', serveShell(assetSource, mountPath));

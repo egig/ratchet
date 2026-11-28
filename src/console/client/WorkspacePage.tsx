@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
+import { Link, Route, Routes, useLocation, useNavigate, useParams } from './router.js';
 import { callOperation, listRows, type AuthUser } from './api.js';
 import { useModels } from './models.js';
 import { useAuth } from './auth.js';

@@ -1,4 +1,4 @@
-import { Navigate, Outlet } from 'react-router';
+import { Navigate, Outlet } from './router.js';
 import { useAuth } from './auth.js';
 import { ModelsProvider } from './models.js';
 import { DomainsProvider } from './domains.js';

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** the console SPA no longer runs on React Router. It uses its own small browser-history router, exported from `@egig/ratchet/console/client` (`Link`, `NavLink`, `Navigate`, `Outlet`, `useNavigate`, `useParams`, `useLocation`, `useSearchParams`). The public site (`routes/`) still uses React Router.
+  - **Breaking:** `PLUGIN_API_VERSION` is now `2`. A plugin console module must import those components and hooks from `@egig/ratchet/console/client` instead of `react-router`. React Router's hooks throw inside the console.
+  - Console routes, including plugin `routes`, are tried in order and the first match wins. React Router ranked them by how specific they were.
+
 - **Breaking:** agents, chat, and workflows moved out of `@egig/ratchet` into the [automation plugin](https://egig.github.io/ratchet/docs/automation), `@egig/ratchet-automation`. To keep them, run `bun add @egig/ratchet-automation`, add `plugins: [automation()]` to `ratchet.config.ts`, and move the top-level `workflows: { ... }` option into `automation({ workflows: { ... } })`. Table names and columns are unchanged, so no data migration is needed. Without the plugin, `ratchet generate` emits a migration that drops the `agents`, `chats`, `messages`, `providers`, and `workflow*` tables, so review it before you apply it.
   - **Breaking:** the `@egig/ratchet/automation` and `@egig/ratchet/workflows` entry points and the `workflows` config option are removed. Their exports now come from `@egig/ratchet-automation`.
   - **Breaking:** `createRatchetApp` no longer accepts `workflows`. Plugins arrive through the generated bundle (`bundle.plugins`).

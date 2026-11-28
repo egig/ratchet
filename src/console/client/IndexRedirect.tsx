@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Navigate } from 'react-router';
+import { Navigate } from './router.js';
 import { listRows } from './api.js';
 import { queryKeys } from './query-keys.js';
 

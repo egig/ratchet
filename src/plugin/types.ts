@@ -10,7 +10,9 @@ import type { PluginToolkit } from './toolkit.js';
  * `ratchet generate` refuse to load a plugin whose version doesn't match, so an incompatible
  * plugin fails at boot with a clear message instead of crashing on a missing context member.
  */
-export const PLUGIN_API_VERSION = 1;
+// v2: console modules navigate with the router exported by `@egig/ratchet/console/client`;
+// the console no longer runs on react-router.
+export const PLUGIN_API_VERSION = 2;
 
 /** A router a plugin mounts. `prefix` must start with `/api/` and must not collide with any
  * model's `/api/:model` segment or another plugin's prefix (checked at boot). Mounted after

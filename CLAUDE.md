@@ -188,7 +188,7 @@ Each is a self-contained set of builtin models + a router + pipeline helpers, wi
 
 ### Console client (`src/console/client/`)
 
-React 19 + React Router + TanStack Query SPA, built by [src/cli/build-console.ts](src/cli/build-console.ts)
+React 19 + TanStack Query SPA on its own small browser-history router ([src/console/client/router.tsx](src/console/client/router.tsx) — first-match-in-order, not react-router; plugin console pages import its `Link`/`useNavigate`/... from `@egig/ratchet/console/client`), built by [src/cli/build-console.ts](src/cli/build-console.ts)
 via `Bun.build` + Tailwind (framework bundles its own `@tailwindcss/cli`). There is **no per-app
 entry file** — consumer extension points (`<model>.form.tsx`, `<model>.<field>.input.tsx` under
 `modelsDir`) are pulled in through `ratchet:*` virtual-module specifiers that codegen populates.

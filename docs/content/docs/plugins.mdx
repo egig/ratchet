@@ -92,7 +92,7 @@ Import everything else from the public entry points: `@egig/ratchet/core`, `/rou
 
 ### Console UI
 
-The `console` module runs in the browser. Import only React, `react-router`, `@tanstack/react-query`, and `@egig/ratchet/console/client` there, never server code.
+The `console` module runs in the browser. Import only React, `@tanstack/react-query`, and `@egig/ratchet/console/client` there, never server code. The console has its own small router: take `Link`, `NavLink`, `Navigate`, `Outlet`, `useNavigate`, `useParams`, `useLocation`, and `useSearchParams` from `@egig/ratchet/console/client`, not from `react-router`. React Router's hooks throw inside the console because no React Router `<Router>` is mounted there.
 
 ```tsx
 import { SparklesIcon, type ConsolePlugin } from '@egig/ratchet/console/client';
@@ -105,7 +105,7 @@ const notesConsole: ConsolePlugin = {
 export default notesConsole;
 ```
 
-- `routes` render inside the console shell and match before the generic `:model/*` screen, so a path equal to a model name replaces that model's list screen.
+- `routes` render inside the console shell and match before the generic `:model/*` screen, so a path equal to a model name replaces that model's list screen. Paths support static segments, `:param`, and a trailing `*`. Console routes are tried in order and the first match wins, so list a static path before a dynamic one it overlaps (`workflows/new` before `workflows/:id`).
 - `shellPanel` is the console's right-side panel. `workspacePanel` is the workspace screen's, and receives `{ workspaceId, onWorkspaceChanged }`. Only the first plugin that fills a slot is used, and its toggle button only appears when the slot is filled.
 
-Declare `react`, `react-router`, `@tanstack/react-query` and `@egig/ratchet` as **peer** dependencies, so the console bundle contains one copy of each.
+Declare `react`, `@tanstack/react-query` and `@egig/ratchet` as **peer** dependencies, so the console bundle contains one copy of each.

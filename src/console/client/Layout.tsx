@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { NavLink, Outlet } from 'react-router';
+import { NavLink, Outlet } from './router.js';
 import { useAuth } from './auth.js';
 import { useModels } from './models.js';
 import { useDomains } from './domains.js';

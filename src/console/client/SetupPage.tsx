@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate } from './router.js';
 import { ApiRequestError } from './api.js';
 import { useAuth } from './auth.js';
 import { NotFoundPage } from './NotFoundPage.js';

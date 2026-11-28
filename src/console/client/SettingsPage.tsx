@@ -1,4 +1,4 @@
-import { Navigate, NavLink, useParams } from 'react-router';
+import { Navigate, NavLink, useParams } from './router.js';
 import { useDomains } from './domains.js';
 import { DomainSettingsForm } from './DomainSettingsForm.js';
 

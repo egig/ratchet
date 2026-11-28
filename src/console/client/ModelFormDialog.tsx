@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router';
+import { useNavigate } from './router.js';
 import { Dialog } from './Dialog.js';
 import { ModelFormPage } from './ModelFormPage.js';
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'react-router';
+import { useParams } from './router.js';
 import type { ConsoleFieldMeta, ConsoleModelMeta } from '../serialize-model.js';
 import { useModels } from './models.js';
 import { useAuth } from './auth.js';

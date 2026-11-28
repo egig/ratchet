@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate } from './router.js';
 import { ApiRequestError, type ProfileInput } from './api.js';
 import { useAuth } from './auth.js';
 import { BrandMark } from './BrandMark.js';

@@ -22,7 +22,9 @@ export interface WorkspacePanelProps {
 /**
  * What a plugin's console module (`RatchetPlugin.console`) default-exports. Bundled into the
  * console through the `ratchet:plugins` virtual module, so it runs in the browser — import React,
- * `react-router`, `@tanstack/react-query` and `@egig/ratchet/console/client`, never server code.
+ * `@tanstack/react-query` and `@egig/ratchet/console/client` (which also exports the console's
+ * router: `Link`, `useNavigate`, `useParams`, ...), never server code — and never `react-router`:
+ * the console doesn't run on it, so its hooks throw outside a react-router `<Router>`.
  */
 export interface ConsolePlugin {
   name: string;

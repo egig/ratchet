@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Route, Routes } from 'react-router';
+import { Router, Route, Routes } from './router.js';
 import { AuthProvider } from './auth.js';
 import { RequireAuth } from './RequireAuth.js';
 import { Layout } from './Layout.js';
@@ -50,7 +50,7 @@ export function ConsoleApp({ customForms, fieldInputs, plugins = [] }: ConsoleAp
       <ConsolePluginsProvider plugins={plugins}>
       <CustomFormsProvider forms={customForms ?? {}}>
         <FieldInputOverridesProvider overrides={fieldInputs ?? {}}>
-          <BrowserRouter basename={__CONSOLE_PATH__}>
+          <Router basename={__CONSOLE_PATH__}>
             <AuthProvider>
               <Routes>
                 <Route path="/setup" element={<SetupPage />} />
@@ -71,7 +71,7 @@ export function ConsoleApp({ customForms, fieldInputs, plugins = [] }: ConsoleAp
                 <Route path="*" element={<NotFoundPage />} />
               </Routes>
             </AuthProvider>
-          </BrowserRouter>
+          </Router>
         </FieldInputOverridesProvider>
       </CustomFormsProvider>
       </ConsolePluginsProvider>

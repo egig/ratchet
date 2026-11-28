@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router';
+import { useSearchParams } from './router.js';
 import { useModels } from './models.js';
 import { listRows, createRow, updateRow, removeRow, type OffsetPage } from './api.js';
 import { queryKeys } from './query-keys.js';

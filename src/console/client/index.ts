@@ -21,6 +21,10 @@ export { getRow, createRow, updateRow, listRows, callOperation, hasPermission, A
 // shell pieces a plugin page reuses. See plugins.tsx.
 export type { ConsolePlugin, ConsolePanel, WorkspacePanelProps } from './plugins.js';
 export { useConsolePlugins } from './plugins.js';
+// The console's own router (router.tsx) — plugin console pages navigate with these, not with
+// `react-router`, which the console no longer runs on.
+export { Link, NavLink, Navigate, Outlet, useNavigate, useParams, useLocation, useSearchParams } from './router.js';
+export type { Location, To, NavigateOptions, NavigateFunction, Params, LinkProps, NavLinkProps, SetSearchParams } from './router.js';
 export { queryKeys } from './query-keys.js';
 export { Dialog as ModalDialog } from './Dialog.js';
 export * from './icons.js';
