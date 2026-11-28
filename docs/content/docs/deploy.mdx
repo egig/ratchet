@@ -5,7 +5,7 @@ description: Running `ratchet serve`, and deploying to a VPS, Vercel, or Cloudfl
 
 `ratchet serve` runs on [Bun](https://bun.sh) — that's the CLI's own runtime, for local development. The bundle from `ratchet build` targets plain Node instead (`dist/server.js`, built with a small Node `http`-to-Fetch bridge, `ratchet/router`'s `serveNode`), so a VPS/container host doesn't need Bun installed at all.
 
-Every entry point — `ratchet serve`, that bundle, a Cloudflare Worker, a Vercel function — assembles the exact same server by calling **`createRatchetApp`** (`@egig/ratchet/server`). You hand it a `db`, an optional `storage` adapter, an optional console asset source, and the generated bundle; it mounts `/api/auth`, `/api/automation`, `/api`, `/_site-assets`, the console, and (when you opt in) the web app — in the one order that makes the linear route match come out right. It does no config loading and no dynamic import of generated files, so it runs unchanged inside a Worker's `fetch(request, env)` handler.
+Every entry point — `ratchet serve`, that bundle, a Cloudflare Worker, a Vercel function — assembles the exact same server by calling **`createRatchetApp`** (`@egig/ratchet/server`). You hand it a `db`, an optional `storage` adapter, an optional console asset source, and the generated bundle; it mounts `/api/auth`, each [plugin](/docs/plugins)'s routers, `/api`, `/_site-assets`, the console, and (when you opt in) the web app — in the one order that makes the linear route match come out right. It does no config loading and no dynamic import of generated files, so it runs unchanged inside a Worker's `fetch(request, env)` handler.
 
 ```ts
 import { createRatchetApp } from '@egig/ratchet/server';
@@ -57,7 +57,7 @@ import { bundle } from '../.ratchet/app.js';
 
 const db = drizzle(neon(process.env.DATABASE_URL!));
 
-// no consoleAssets, no web → an API-only function (`/api/auth`, `/api/automation`, `/api`,
+// no consoleAssets, no web → an API-only function (`/api/auth`, plugin routers, `/api`,
 // `/_site-assets`). App's own `.fetch` matches Vercel's fetch-export convention directly.
 export default await createRatchetApp({ db, bundle });
 ```
@@ -130,6 +130,6 @@ function createAssetsBindingSource(assets: { fetch(r: Request): Promise<Response
 
 **File storage** — `env.FILES` is a native R2 binding. Implement flystorage's `StorageAdapter` directly against it (only `write`/`read`/`deleteFile` are ever called by the generic API router; stub the rest to throw) and wrap it in a `FileStorage`. Reusing `@egig/ratchet/storage/s3` against R2's S3 API instead would trade the free binding for an authenticated HTTP round trip — not worth it inside the Worker the binding is scoped to.
 
-**Agent chat (`/api/automation`)** — the automation router pulls in the [LangChain](https://docs.langchain.com/oss/javascript) stack (`createAgent` + `@langchain/anthropic`/`@langchain/openai`). Its only Node-builtin dependency is `node:async_hooks`, which `compatibility_flags: ["nodejs_compat"]` already covers, so it deploys with the rest of the Worker — but it hasn't been load-tested on `workerd`. If you hit a runtime error inside a chat turn on Workers, run the console and its agents on a Node target (`ratchet serve`, a container, or a Vercel Node function) and keep the generic API on Workers.
+**Agent chat (`/api/automation`, [automation plugin](/docs/automation))** — the automation router pulls in the [LangChain](https://docs.langchain.com/oss/javascript) stack (`createAgent` + `@langchain/anthropic`/`@langchain/openai`). Its only Node-builtin dependency is `node:async_hooks`, which `compatibility_flags: ["nodejs_compat"]` already covers, so it deploys with the rest of the Worker — but it hasn't been load-tested on `workerd`. If you hit a runtime error inside a chat turn on Workers, run the console and its agents on a Node target (`ratchet serve`, a container, or a Vercel Node function) and keep the generic API on Workers.
 
 Full worker + `R2StorageAdapter` + `wrangler.jsonc` in the [example](https://github.com/egig/ratchet/tree/main/example/deploy/cloudflare).

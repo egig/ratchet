@@ -17,7 +17,7 @@ export type FilterGroupLogic = 'and' | 'or';
 
 /** One level of `(a AND b)` / `(a OR b)` grouping around plain clauses — deliberately not
  * recursive (no group-of-groups): keeps the wire shape a `zod` union free of `z.lazy`, which
- * `zod-to-json-schema` (automation/tool.ts's LLM tool-schema derivation) can't turn into a clean
+ * `zod-to-json-schema` (the automation plugin's `agents/tool.ts`'s LLM tool-schema derivation) can't turn into a clean
  * non-recursive JSON Schema, and keeps `FilterBar`'s UI a single flat level to build by hand. */
 export interface FilterGroup {
   logic: FilterGroupLogic;

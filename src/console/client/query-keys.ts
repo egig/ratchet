@@ -15,7 +15,4 @@ export const queryKeys = {
    * Omit `params` to get the bare model-level prefix used for invalidation. */
   rows: (model: string, params?: unknown) => (params === undefined ? (['rows', model] as const) : (['rows', model, params] as const)),
   row: (model: string, id: string) => ['row', model, id] as const,
-  /** the chat list feeding assistant-ui's thread list — invalidated after each turn's
-   * `onFinish` so titles/timestamps refresh (Q6). */
-  chats: ['chats'] as const,
 };

@@ -5,8 +5,10 @@ import { createApiRouter } from '../router/create-router.js';
 import { createSiteAssetsRouter } from '../router/site-assets.js';
 import { createAuthRouter } from '../auth/router.js';
 import type { AuthConfig } from '../auth/better-auth.js';
-import { createAutomationRouter } from '../automation/router.js';
 import { assertValidConsolePath } from './console-path.js';
+import { assemblePlugins } from '../plugin/assemble.js';
+import type { RatchetPlugin } from '../plugin/types.js';
+import { workspacePlugin } from '../workspace/plugin.js';
 import type { ModelDefinition } from '../core/model.js';
 import type { DomainDefinition } from '../core/domain.js';
 import type { FileStorage } from '../core/storage.js';
@@ -23,12 +25,16 @@ export interface RatchetBundle {
   domains: Record<string, DomainDefinition>;
   /** present only when the consumer opted into the `src/web/` site (`routes/root.tsx` exists) */
   web?: { routes: RouteObject[]; resourceRouteIds?: ReadonlySet<string> };
+  /** `ratchet.config.ts`'s `plugins` — `.ratchet/app.ts` imports the config module to carry them */
+  plugins?: RatchetPlugin[];
 }
+
+/** Plugins every app gets regardless of config, ahead of the consumer's own. */
+export const BUILTIN_PLUGINS: RatchetPlugin[] = [workspacePlugin];
 
 export interface RatchetAppOptions {
   /** drizzle-postgres client (already constructed — `createRatchetApp` never reads config) */
   db: AnyDb;
-  workflows?: import('../workflows/config.js').WorkflowConfig;
   bundle: RatchetBundle;
   /** omit → `field.file` writes fail with 500, same as today */
   storage?: FileStorage;
@@ -58,42 +64,46 @@ export interface RatchetAppOptions {
  * `dist/server.js`, a Cloudflare Worker, a Vercel function. Owns the registration-order-sensitive
  * mount sequence (most specific prefix first) so it lives in exactly one place:
  *
- *   /api/auth  →  /api/automation  →  /api  →  (console)  →  /_site-assets  →  (/_ratchet + web /)
+ *   /api/auth  →  (plugin prefixes)  →  /api  →  (console)  →  /_site-assets  →  (/_ratchet + web /)
  *
- * Features (`/api/auth`, `/api/automation`, `/api`, `/_site-assets`) are always mounted. Only
- * infrastructure is configurable: the console mounts iff `consoleAssets` is supplied, the web app
- * iff `bundle.web` is present. Pure assembly — no config loading, no `import()` of generated files —
+ * Core features (`/api/auth`, `/api`, `/_site-assets`) are always mounted; plugin routers
+ * (`bundle.plugins`) mount between `/api/auth` and the generic `/api/:model`. Infrastructure is
+ * configurable: the console mounts iff `consoleAssets` is supplied, the web app iff `bundle.web`
+ * is present. Pure assembly — no config loading, no `import()` of generated files —
  * so it runs unchanged inside a Worker's `fetch(request, env)` handler. The caller listens
  * (`Bun.serve` / `serveNode` / `export default`) and logs.
  */
 export async function createRatchetApp(opts: RatchetAppOptions): Promise<App> {
   const { bundle, storage } = opts;
-  let db = opts.db;
   const { models, domains } = bundle;
+  const env = opts.env ?? 'development';
+
+  // Plugins first: `decorateDb` may wrap the handle (e.g. workflow triggers observing every
+  // mutation), and every router below must be built over the decorated one.
+  const plugins = await assemblePlugins({
+    plugins: [...BUILTIN_PLUGINS, ...(bundle.plugins ?? [])],
+    db: opts.db,
+    models,
+    domains,
+    env,
+  });
+  const db = plugins.db;
 
   const app = new App();
-  if (opts.workflows) {
-    const { WorkflowRuntime } = await import('../workflows/runtime.js');
-    const { createInngestAdapter } = await import('../workflows/inngest.js');
-    const { createWorkflowRouter } = await import('../workflows/router.js');
-    const runtime = new WorkflowRuntime(db, models, opts.workflows);
-    runtime.adapter = createInngestAdapter(runtime);
-    db = runtime.observe();
-    app.route('/api/workflows', createWorkflowRouter(runtime));
-  }
   // Route matching is a linear scan, first structural match wins (router/http-app.ts), so the
   // order here IS the precedence. Fixed-prefix routers first; the console (whose `consolePath`
   // can be '/', making its `/*` a total catch-all) after them; the web app's own `/` catch-all
   // dead last.
   //
-  //   /api/auth · /api/automation   — must win over the generic `/api/:model` pattern
+  //   /api/auth                     — must win over the generic `/api/:model` pattern
+  //   plugin prefixes (/api/<x>)    — same; collisions with model names are rejected at boot
   //   /api                          — the generic model router
   //   /_site-assets                 — public file-field values; fixed prefix, mounted before the
   //                                   console so a `consolePath: '/'` can't shadow it
   //   consolePath                   — the admin SPA
   //   /_ratchet · /                 — the web app (catch-all), only when opts.web is supplied
-  app.route('/api/auth', createAuthRouter(db, { env: opts.env ?? 'development', config: opts.auth }));
-  app.route('/api/automation', createAutomationRouter(db, models));
+  app.route('/api/auth', createAuthRouter(db, { env, config: opts.auth, onSetup: plugins.runSetup }));
+  for (const { prefix, app: pluginApp } of plugins.routes) app.route(prefix, pluginApp);
   app.route('/api', createApiRouter(models, db, storage));
   app.route('/_site-assets', createSiteAssetsRouter(db, storage, domains));
 

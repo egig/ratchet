@@ -56,6 +56,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
   let client: postgres.Sql;
   let db: AnyDb;
   let authApp: App;
+  let setupCalls: { rootRoleId: string; userId: string; inTx: boolean }[] = [];
   let prodAuthApp: App;
   let apiApp: ReturnType<typeof createApiRouter>;
   let consoleApp: ReturnType<typeof createConsoleRouter>;
@@ -172,7 +173,15 @@ describeIfDb('auth system (against a live Postgres)', () => {
     // the full path (its `basePath`).
     const secret = 'test-secret-test-secret-test-secret-0123';
     authApp = new App();
-    authApp.route('/api/auth', createAuthRouter(db, { config: { secret, baseURL: 'http://localhost' } }));
+    authApp.route(
+      '/api/auth',
+      createAuthRouter(db, {
+        config: { secret, baseURL: 'http://localhost' },
+        onSetup: async ({ tx, rootRoleId, userId }) => {
+          setupCalls.push({ rootRoleId, userId, inTx: tx !== db });
+        },
+      }),
+    );
     prodAuthApp = new App();
     prodAuthApp.route('/api/auth', createAuthRouter(db, { env: 'production', config: { secret, baseURL: 'http://localhost' } }));
     apiApp = createApiRouter({ roles: Role, users: User, notes: Note, lockable_docs: LockableDoc }, db);
@@ -185,6 +194,7 @@ describeIfDb('auth system (against a live Postgres)', () => {
   });
 
   beforeEach(async () => {
+    setupCalls = [];
     // `workspaces` is deliberately not truncated here — see the beforeAll note above.
     await db.execute(sql`TRUNCATE TABLE notes, lockable_docs, sessions, accounts, verifications, users, roles, agents, providers`);
   });
@@ -303,24 +313,20 @@ describeIfDb('auth system (against a live Postgres)', () => {
       expect(roles[0]!.permissions).toEqual({ '*': { '*': { fields: '*', scope: 'any' } } });
     });
 
-    it('provisions the built-in Ratchet Agent with no Provider, wired to the Root role', async () => {
-      await authApp.request('/api/auth/setup', {
+    it("runs the plugin setup hooks inside the provisioning transaction, with the Root role and the new user", async () => {
+      const res = await authApp.request('/api/auth/setup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: setupBody('root8@example.com'),
       });
-
-      const providers = (await db.execute(sql`SELECT id FROM providers`)) as unknown as { id: string }[];
-      expect(providers.length).toBe(0);
+      expect(res.status).toBe(201);
 
       const roles = (await db.execute(sql`SELECT id FROM roles WHERE name = 'Root'`)) as unknown as { id: string }[];
-      const agents = (await db.execute(sql`SELECT name, provider_id, role_id FROM agents`)) as unknown as {
-        name: string;
-        provider_id: string | null;
-        role_id: string;
-      }[];
-      expect(agents.length).toBe(1);
-      expect(agents[0]).toEqual({ name: 'Ratchet', provider_id: null, role_id: roles[0]!.id });
+      const users = (await db.execute(sql`SELECT id FROM users WHERE email = 'root8@example.com'`)) as unknown as { id: string }[];
+      expect(setupCalls).toEqual([{ rootRoleId: roles[0]!.id, userId: users[0]!.id, inTx: true }]);
+      // core seeds no agent of its own — that's the automation plugin's `onSetup` now
+      const agents = (await db.execute(sql`SELECT id FROM agents`)) as unknown as unknown[];
+      expect(agents.length).toBe(0);
     });
   });
 

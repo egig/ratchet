@@ -9,7 +9,7 @@ export interface ScannedModel {
   exportName: string;
   model: ModelDefinition;
   /** set for the framework's own built-in models (src/codegen/builtins.ts) — e.g. `'@egig/ratchet/auth'`
-   * for User/Role/Session, `'@egig/ratchet/automation'` for Agent/Chat/Message. When set,
+   * for User/Role/Session, `'@egig/ratchet-automation'` for a plugin's models (`RatchetPlugin.module`). When set,
    * codegen imports the model from this package specifier instead of a relative filesystem path. */
   builtinPackage?: string;
   /** this model's Domain (ADR 0001), inferred from the top-level `modelsDir` subdirectory its file

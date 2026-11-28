@@ -25,7 +25,7 @@ describe('createRatchetApp', () => {
 
     // a real route on each always-on router — not the app-level 404
     expect(await status(app, '/api/auth/me')).not.toBe(404);
-    expect(await status(app, '/api/automation/chats')).not.toBe(404);
+    // feature packages (automation, ...) mount only through `bundle.plugins` — see plugin-contract.test.ts
     // `/_site-assets/:domain/:field/:token` — unknown domain → the router's own 404 (JSON body),
     // but it's the router answering, so the path structurally matched
     const siteAssets = await app.request('/_site-assets/x/y/z');

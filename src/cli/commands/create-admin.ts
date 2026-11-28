@@ -1,6 +1,11 @@
 import { createInterface } from 'node:readline/promises';
 import { createDb } from '../../core/db-client.js';
-import { loadConfig } from '../load-config.js';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { loadConfig, resolveDirs } from '../load-config.js';
+import { resolveEnv } from '../../core/config.js';
+import { assemblePlugins } from '../../plugin/assemble.js';
+import { BUILTIN_PLUGINS, type RatchetBundle } from '../../server/index.js';
 import { hasRootAdmin } from '../../auth/lookup.js';
 import { provisionRootAdmin } from '../../auth/provisioning.js';
 import { PipelineError } from '../../core/pipeline.js';
@@ -16,6 +21,18 @@ import { PipelineError } from '../../core/pipeline.js';
 export async function runCreateAdmin(cwd: string, opts: { email?: string; password?: string } = {}): Promise<void> {
   const config = await loadConfig(cwd);
   const db = await createDb(config.db);
+  // plugin `onSetup` hooks need the same assembled context `ratchet serve` builds — read the
+  // generated bundle for the model/domain maps (run `ratchet generate` first, as for `serve`).
+  const { bundle } = (await import(pathToFileURL(path.join(resolveDirs(cwd, config).generatedDir, 'app.ts')).href)) as {
+    bundle: RatchetBundle;
+  };
+  const plugins = await assemblePlugins({
+    plugins: [...BUILTIN_PLUGINS, ...(bundle.plugins ?? [])],
+    db,
+    models: bundle.models,
+    domains: bundle.domains,
+    env: resolveEnv(config),
+  });
 
   if (await hasRootAdmin(db)) {
     console.error('A root admin already exists.');
@@ -34,7 +51,7 @@ export async function runCreateAdmin(cwd: string, opts: { email?: string; passwo
   }
 
   try {
-    await provisionRootAdmin(db, { email, password });
+    await provisionRootAdmin(plugins.db, { email, password }, plugins.runSetup);
   } catch (err) {
     if (err instanceof PipelineError && err.fields) {
       for (const [field, message] of Object.entries(err.fields)) console.error(`${field}: ${message}`);

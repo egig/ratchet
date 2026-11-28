@@ -1,4 +1,3 @@
-import { WorkflowsPage } from './WorkflowsPage.js';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Route, Routes } from 'react-router';
 import { AuthProvider } from './auth.js';
@@ -14,6 +13,7 @@ import { ProfilePage } from './ProfilePage.js';
 import { WorkspacePage } from './WorkspacePage.js';
 import { CustomFormsProvider, type ModelFormComponent } from './custom-forms.js';
 import { FieldInputOverridesProvider, type FieldInputOverrides } from './field-input-overrides.js';
+import { ConsolePluginsProvider, type ConsolePlugin } from './plugins.js';
 
 // One client for the whole SPA lifetime — `ConsoleApp` is mounted once by `main.tsx`, so this
 // never needs to be recreated per-render. Retries off: a failed request here is almost always an
@@ -35,15 +35,19 @@ export interface ConsoleAppProps {
    * renders the matching one instead of its own kind-based switch. Built by the generated
    * `console-field-inputs.ts` and passed in by `console/client/main.tsx`. */
   fieldInputs?: FieldInputOverrides;
+  /** every enabled plugin's console module (`RatchetPlugin.console`), in plugin order — built by
+   * the generated `console-plugins.ts` and passed in by `console/client/main.tsx`. */
+  plugins?: readonly ConsolePlugin[];
 }
 
 /** The console SPA's root — every deployment gets the same shell (routes, sidebar, list/table
  * views) except for branding (`ratchet.config.ts`'s `brand`, see `BrandMark.tsx`), per-model
  * create/edit forms (`customForms`), and per-field inputs (`fieldInputs`), all build-time config.
  * Mounted by `console/client/main.tsx`. */
-export function ConsoleApp({ customForms, fieldInputs }: ConsoleAppProps) {
+export function ConsoleApp({ customForms, fieldInputs, plugins = [] }: ConsoleAppProps) {
   return (
     <QueryClientProvider client={queryClient}>
+      <ConsolePluginsProvider plugins={plugins}>
       <CustomFormsProvider forms={customForms ?? {}}>
         <FieldInputOverridesProvider overrides={fieldInputs ?? {}}>
           <BrowserRouter basename={__CONSOLE_PATH__}>
@@ -58,8 +62,9 @@ export function ConsoleApp({ customForms, fieldInputs }: ConsoleAppProps) {
                     <Route index element={<IndexRedirect />} />
                     <Route path="settings" element={<SettingsPage />} />
                     <Route path="settings/:domain" element={<SettingsPage />} />
-                    <Route path="workflows" element={<WorkflowsPage />} />
-                    <Route path="workflows/:workflowId" element={<WorkflowsPage />} />
+                    {plugins.flatMap((p) =>
+                      (p.routes ?? []).map((r) => <Route key={`${p.name}:${r.path}`} path={r.path} element={r.element} />),
+                    )}
                     <Route path=":model/*" element={<ModelListPage />} />
                   </Route>
                 </Route>
@@ -69,6 +74,7 @@ export function ConsoleApp({ customForms, fieldInputs }: ConsoleAppProps) {
           </BrowserRouter>
         </FieldInputOverridesProvider>
       </CustomFormsProvider>
+      </ConsolePluginsProvider>
     </QueryClientProvider>
   );
 }

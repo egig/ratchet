@@ -30,6 +30,8 @@ export async function runCheck(cwd: string): Promise<void> {
       generatedDir: dirs.generatedDir,
       routesDir: dirs.routesDir,
       dialect: resolveDbConfig(config.db).driver,
+      plugins: config.plugins,
+      configFile: path.join(cwd, 'ratchet.config.ts'),
     });
     results.push({ step: 'models', status: 'PASS', note: `${modelCount} model(s)` });
   } catch (err) {

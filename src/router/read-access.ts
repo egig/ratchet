@@ -10,7 +10,7 @@ import type { FilterNode, ParsedListQuery } from './query.js';
 
 /**
  * The read-time field-permission enforcement shared between the generic `/api/:model` GET routes
- * (`create-router.ts`) and the `list`/`findOne` agent tools (`automation/tool.ts`) — both read a
+ * (`create-router.ts`) and the `list`/`findOne` agent tools (the automation plugin's `agents/tool.ts`) — both read a
  * model exactly the same way (`router/list.ts`'s `listRows`/`getOneRow`) and must apply the same
  * `read` field grant to the result, including `?include=`d relations.
  */

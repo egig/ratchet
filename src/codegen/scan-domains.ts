@@ -9,7 +9,7 @@ export interface ScannedDomain {
   exportName: string;
   domain: DomainDefinition;
   /** set for the framework's own built-in Domains (src/codegen/builtins.ts) — e.g.
-   * `'@egig/ratchet/automation'` for the Automation Domain. When set, codegen imports the Domain
+   * `'@egig/ratchet-automation'` for a plugin's Domain. When set, codegen imports the Domain
    * from this package specifier instead of a relative filesystem path, and `assertDomainMatchesFolder`
    * skips it (there's no on-disk folder for a builtin to live under). */
   builtinPackage?: string;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { useModels } from './models.js';
@@ -12,18 +12,15 @@ import { Button } from './ui/button.js';
 
 export interface WorkspaceTabsProps {
   workspaceId: string;
-  /** bumped by the parent (`WorkspacePage`) after a chat turn completes, so this refetches — the
-   * agent may have opened/edited/closed tabs via its create_workspace_views/... tools during that
-   * turn (agent tool calls aren't reflected live, mid-turn; see automation/tool.ts). */
+  /** bumped by the parent (`WorkspacePage`) when the side panel reports a change, so this
+   * refetches — e.g. an agent in the automation plugin's chat opened/edited/closed tabs via its
+   * workspace-view tools during a turn (tool calls aren't reflected live, mid-turn). */
   refreshSignal: number;
-  /** whether `WorkspacePage` currently renders the agent chat panel — the toggle button lives
-   * here, in the tab strip's row, rather than inside the chat panel itself, since a fully-hidden
-   * panel wouldn't have anywhere to put a re-open control. */
-  chatOpen: boolean;
-  /** the workspace's persistent `chatEnabled` setting — when false, chat isn't available at all,
-   * so the show/hide toggle button is dropped entirely (not just the panel). */
-  chatAvailable: boolean;
-  onToggleChat: () => void;
+  /** the plugin side panel (`ConsolePlugin.workspacePanel`) toggle, or `null` when no plugin fills
+   * that slot or the workspace's `chatEnabled` setting is off — the button is then dropped
+   * entirely. It lives here, in the tab strip's row, rather than inside the panel itself, since a
+   * fully-hidden panel wouldn't have anywhere to put a re-open control. */
+  panelToggle: { open: boolean; label: string; icon?: ComponentType<{ className?: string }>; onToggle: () => void } | null;
   /** the active workspace's `locked` flag — while true, tabs are frozen (no add/reorder/close) and
    * the active tab's `FilterBar` is hidden; the rows a tab shows stay fully interactive, only the
    * set of tabs and their queries are frozen. */
@@ -35,9 +32,7 @@ export interface WorkspaceTabsProps {
 export function WorkspaceTabs({
   workspaceId,
   refreshSignal,
-  chatOpen,
-  chatAvailable,
-  onToggleChat,
+  panelToggle,
   locked,
 }: WorkspaceTabsProps) {
   const queryClient = useQueryClient();
@@ -266,19 +261,19 @@ export function WorkspaceTabs({
           </div>
         )}
 
-        {chatAvailable && (
+        {panelToggle && (
           <div className="ml-auto pb-1">
             <button
               type="button"
-              onClick={onToggleChat}
-              title={chatOpen ? 'Hide chat' : 'Show chat'}
-              aria-label={chatOpen ? 'Hide chat' : 'Show chat'}
-              aria-pressed={chatOpen}
+              onClick={panelToggle.onToggle}
+              title={panelToggle.label}
+              aria-label={panelToggle.label}
+              aria-pressed={panelToggle.open}
               className={`flex h-7 w-7 items-center justify-center rounded ${
-                chatOpen ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                panelToggle.open ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               }`}
             >
-              <SparklesIcon className="h-4 w-4" />
+              {panelToggle.icon ? <panelToggle.icon className="h-4 w-4" /> : <SparklesIcon className="h-4 w-4" />}
             </button>
           </div>
         )}

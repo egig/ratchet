@@ -21,6 +21,7 @@ interface Fixture {
     migrationsDir: string;
     consolePath: string;
     brand: Record<string, unknown>;
+    plugins: never[];
   };
 }
 
@@ -44,6 +45,7 @@ async function makeFixture(withWeb: boolean): Promise<Fixture> {
       migrationsDir: path.join(cwd, 'migrations'),
       consolePath: '/console',
       brand: {},
+      plugins: [],
     },
   };
 }

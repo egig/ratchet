@@ -17,6 +17,16 @@ export { useAuth } from './auth.js';
 export type { AuthUser, OffsetPage } from './api.js';
 export { getRow, createRow, updateRow, listRows, callOperation, hasPermission, ApiRequestError } from './api.js';
 
+// The plugin console contract — what a `RatchetPlugin.console` module default-exports, plus the
+// shell pieces a plugin page reuses. See plugins.tsx.
+export type { ConsolePlugin, ConsolePanel, WorkspacePanelProps } from './plugins.js';
+export { useConsolePlugins } from './plugins.js';
+export { queryKeys } from './query-keys.js';
+export { Dialog as ModalDialog } from './Dialog.js';
+export * from './icons.js';
+export { apiRequest } from './api.js';
+export type { ConsoleModelMeta, ConsoleFieldMeta, ConsoleOperationMeta } from '../serialize-model.js';
+
 // **Experimental**: the console's own UI primitive layer (`ui/index.ts` — Radix Primitives
 // restyled onto the token-based light/dark theme in styles.css, with `class-variance-authority`
 // variants). Exported so a `*.form.tsx`/`*.input.tsx` can match the console's own look instead of

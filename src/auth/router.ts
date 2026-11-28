@@ -8,6 +8,7 @@ import { User } from './models/index.js';
 import { createRatchetAuth, type AuthConfig, type RatchetAuth } from './better-auth.js';
 import { provisionRootAdmin } from './provisioning.js';
 import { hasRootAdmin, listPermissionsForRole } from './lookup.js';
+import type { PluginSetupInfo } from '../plugin/types.js';
 
 function requireString(input: Record<string, unknown>, key: string): string {
   const value = input[key];
@@ -31,6 +32,8 @@ export interface AuthRouterOptions {
   config?: AuthConfig;
   /** an already-built instance, for callers that also need `auth.api` themselves. */
   auth?: RatchetAuth;
+  /** plugin setup hooks, run inside the `/setup` provisioning transaction (see `provisionRootAdmin`) */
+  onSetup?: (info: PluginSetupInfo) => Promise<void>;
 }
 
 /**
@@ -69,7 +72,7 @@ export function createAuthRouter(db: AnyDb, opts: AuthRouterOptions = {}): App {
     const email = requireString(body, 'email');
     const password = requireString(body, 'password');
 
-    const user = await provisionRootAdmin(db, { email, password });
+    const user = await provisionRootAdmin(db, { email, password }, opts.onSetup);
 
     const res = await auth.api.signInEmail({ body: { email, password }, headers: c.req.raw.headers, asResponse: true });
     if (!res.ok) throw new PipelineError({ code: 'INTERNAL', status: 500, message: 'setup: sign-in after provisioning failed' });

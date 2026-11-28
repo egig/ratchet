@@ -9,6 +9,7 @@ import { ConsoleApp } from './ConsoleApp.js';
 // consumer-authored.
 import { customForms } from 'ratchet:custom-forms';
 import { fieldInputs } from 'ratchet:field-inputs';
+import { consolePlugins } from 'ratchet:plugins';
 
 // keep the browser tab title in sync with the configured brand (same fallback as `BrandMark`) —
 // the server shell ships a static "Ratchet console" `<title>` since brand is a client-bundle-only
@@ -16,4 +17,4 @@ import { fieldInputs } from 'ratchet:field-inputs';
 document.title = __CONSOLE_BRAND__.name ?? 'Ratchet console';
 
 const root = document.getElementById('root')!;
-createRoot(root).render(<ConsoleApp customForms={customForms} fieldInputs={fieldInputs} />);
+createRoot(root).render(<ConsoleApp customForms={customForms} fieldInputs={fieldInputs} plugins={consolePlugins} />);

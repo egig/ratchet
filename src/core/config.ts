@@ -81,7 +81,9 @@ export function resolveDbConfig(db: DbConfig): { driver: 'postgres'; connectionS
 }
 
 export interface FrameworkConfig {
-  workflows?: import('../workflows/config.js').WorkflowConfig;
+  /** feature plugins (e.g. `automation()` from `@egig/ratchet-automation`), in mount order — see
+   * `RatchetPlugin` (`@egig/ratchet/plugin`). Each contributes models, routers and console UI. */
+  plugins?: import('../plugin/types.js').RatchetPlugin[];
   /** better-auth options, passed through to the `/api/auth` router — social providers
    * (`socialProviders`), email verification/password-reset callbacks, session lifetimes, extra
    * `plugins`, `secret`/`baseURL`. Omit for email/password sign-in with better-auth's defaults.

@@ -33,6 +33,8 @@ async function generateAndPush(cwd: string, dirs: ReturnType<typeof resolveDirs>
     generatedDir: dirs.generatedDir,
     routesDir: dirs.routesDir,
     dialect: resolveDbConfig(config.db).driver,
+    plugins: config.plugins,
+    configFile: path.join(cwd, 'ratchet.config.ts'),
   });
   const drizzleConfigFile = await writeDrizzleKitConfig(cwd, dirs.generatedDir, dirs.migrationsDir, config.db);
   // §7: `dev` is the one place `push` is used — immediate schema sync, no migration files.

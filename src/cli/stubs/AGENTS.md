@@ -200,6 +200,13 @@ Register `<origin>/api/auth/callback/github` with the provider. Production needs
 Don't add a password column or a sessions table yourself: users, sessions, and sign-in accounts
 are built in. A better-auth plugin that adds columns to `user`/`session` isn't supported yet.
 
+### Add a feature plugin
+
+Feature packages (for example `@egig/ratchet-automation`: AI agents, chat, workflows) are
+installed with `bun add <package>` and listed in `ratchet.config.ts` under
+`plugins: [automation()]`. Then run `ratchet generate` and review the migration it writes: a
+plugin brings its own tables. Removing a plugin drops them on the next migration.
+
 ### Add admin-editable settings
 
 Create `models/<folder>/settings.domain.ts` with `defineDomain('<folder>', { settings: { ... } })`.

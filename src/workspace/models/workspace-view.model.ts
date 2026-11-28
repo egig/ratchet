@@ -9,7 +9,7 @@ import { requireWorkspaceOwnership } from '../pipeline.js';
 // A filter entry is either a plain `[field, op, value]` clause, or a `[logic, [clauses]]` group —
 // one level of `(a AND b)`/`(a OR b)` grouping around plain clauses, deliberately not recursive
 // (no group-of-groups): mirrors `router/query.ts`'s `FilterNode`, whose doc comment explains why
-// (keeps this a `z.union` with no `z.lazy`, which `zod-to-json-schema` — automation/tool.ts's
+// (keeps this a `z.union` with no `z.lazy`, which `zod-to-json-schema` — the automation plugin's `agents/tool.ts`'s
 // LLM tool-schema derivation — can't turn into a clean non-recursive JSON Schema).
 const filterClauseSchema = z.tuple([z.string(), z.string(), z.unknown()]);
 const filterGroupSchema = z.tuple([z.enum(['and', 'or']), z.array(filterClauseSchema)]);
@@ -33,7 +33,7 @@ const sortSchema = z.array(z.object({ field: z.string(), direction: z.enum(['asc
  * view row's own ownership, not the parent it claims to belong to.
  *
  * `console: { hidden: true }`: managed only through the Workspace screen (console/client's
- * WorkspaceTabs/FilterBar) and agent tool calls (create_workspace_views/... — automation/tool.ts
+ * WorkspaceTabs/FilterBar) and agent tool calls (create_workspace_views/... — the automation plugin's `agents/tool.ts`
  * derives these automatically from a role grant on 'workspace_views'), never the
  * generic sidebar.
  */

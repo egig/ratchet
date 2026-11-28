@@ -44,7 +44,7 @@ bun run docs:build
 
 ### DB-backed tests silently skip
 
-Several suites (`router`, `auth`, `workspace`, `automation-*`, `site-assets`, ...) read
+Several suites (`router`, `auth`, `workspace`, `site-assets`, ...) read
 `process.env.DATABASE_URL` and `describe.skip` when it's unset — a bare `bun test` passes without
 exercising them. To run the full suite, point `DATABASE_URL` at a **throwaway** database (each suite
 creates and drops its own tables):
@@ -92,17 +92,20 @@ constraints are deliberately not emitted (drizzle-kit push bug; see `schema-gen.
 
 [src/codegen/generate.ts](src/codegen/generate.ts) scans `modelsDir` and writes `.ratchet/`:
 `schema.ts`, `validators.ts`, `registry.ts`, `domains.ts`, `console-forms.ts`,
-`console-field-inputs.ts`. `BUILTIN_MODELS` / `BUILTIN_DOMAINS` / `BUILTIN_FORMS`
+`console-field-inputs.ts`, `console-plugins.ts`, `app.ts`. `BUILTIN_MODELS` / `BUILTIN_FORMS`
 ([src/codegen/builtins.ts](src/codegen/builtins.ts)) inject the framework's own models (auth,
-automation, workspace) into the same scan — those live in `src/*/models/` and aren't
-reachable by the consumer-dir walk, so their domain and import path are assigned explicitly.
+workspace) into the same scan — those live in `src/*/models/` and aren't reachable by the
+consumer-dir walk, so their domain and import path are assigned explicitly. Plugin models join the
+same way (`pluginScanEntries`, imported from the plugin's `module`). `.ratchet/app.ts` imports
+`ratchet.config.ts` so every server entry carries `bundle.plugins`.
 
 ### The server is assembled, never hand-written
 
 [src/cli/commands/serve.ts](src/cli/commands/serve.ts) imports the generated `registry.ts` +
 `domains.ts`, builds a name→`ModelDefinition` map, and mounts routers on one `App` in a
 **registration-order-sensitive** sequence (most specific prefix first): `/api/auth`,
-`/api/automation`, `/api` (generic `/api/:model`), then the console at `consolePath` (can be `/`),
+plugin prefixes (`/api/<segment>`, collisions with model names rejected at boot), `/api` (generic
+`/api/:model`), then the console at `consolePath` (can be `/`),
 then `/_site-assets`, then — when the consumer opts into `src/web/` — the `routes/` catch-all `/`.
 Don't reorder without understanding the catch-all shadowing rules documented in that file.
 
@@ -161,15 +164,26 @@ console-editable **Domain Settings** (read by pipelines at request time — dist
 [CONTEXT.md](CONTEXT.md) for the shared vocabulary and [docs/adr/](docs/adr/) for why (folder
 inference: ADR 0001; DB-backed settings: ADR 0002).
 
-### Feature packages
+### Plugins (`src/plugin/`, ADR 0006)
 
-Each is a self-contained set of builtin models + a router + pipeline helpers, wired in by `serve.ts`:
+Feature packages plug in through `RatchetPlugin` (`ratchet.config.ts` → `plugins: [...]`):
+models/domains/forms, `routes(ctx)`, `decorateDb`, `onSetup` (inside the first-admin tx),
+`service`, `requires`/`optional`, console module(s) via the `ratchet:plugins` virtual module, and
+Tailwind inputs. Plugins get a `PluginContext` whose `kit` holds core's persistence/access/query
+helpers — plugin code must only import the public `@egig/ratchet/*` entry points, never `src/`
+internals. `apiVersion` (`PLUGIN_API_VERSION`) gates compatibility; bump it when `PluginContext`
+or `RatchetPlugin` change shape. The automation plugin (agents, chat, workflows) is
+`@egig/ratchet-automation`, its own repo (sibling checkout `../ratchet-automation`, linked via
+`link:@egig/ratchet`). `test/plugin-contract.test.ts` covers the contract with a fake plugin.
+
+### Built-in feature packages
+
+Each is a self-contained set of builtin models + a router + pipeline helpers, wired in by `createRatchetApp`:
 
 | Path | What |
 | --- | --- |
 | `src/auth/` | better-auth (ADR 0005): User/Role/Session/Account/Verification models, `adapter.ts` (better-auth storage over `AnyDb`), `better-auth.ts` (fixed options + `FrameworkConfig.auth` passthrough), `/api/auth/*` (Ratchet's `/setup` + `/me`, the rest delegated to better-auth), session-token resolution, PBKDF2 hasher, `presetFields()` |
-| `src/automation/` | `Agent`/`Provider`/`Chat`/`Message`, `/api/automation/*`, agent tool exposure + turn runner. Chat uses assistant-ui (`useDataStreamRuntime`) + `assistant-stream`; vendored+restyled components in `src/console/client/chat/`. `Message.content` is a JSON parts blob. See [docs-internal/](docs-internal/) for the re-architecture plan. |
-| `src/workspace/` | `Workspace` model + saved views; console right-panel |
+| `src/workspace/` | `Workspace` model + saved views; console screen with a plugin panel slot. `workspacePlugin` (always on) exposes a `snapshot` service other plugins soft-depend on. Slated for extraction into its own plugin |
 | `src/web/` | the consumer's own `routes/**/*.tsx` React Router data-mode site — SSR + client bundle + the `/` catch-all; `/_site-assets/*` (`src/router/site-assets.ts`) serves public `field.file` Domain Settings values. There is no built-in `website` domain — `ratchet init` scaffolds `models/website/` (Page/Contact/settings) as consumer source. |
 
 ### Console client (`src/console/client/`)
